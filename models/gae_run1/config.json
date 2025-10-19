@@ -1,0 +1,23 @@
+{
+  "features": [
+    "iv_atm_30d_spx",
+    "iv_ts_slope_spx",
+    "iv_skew_30d_spx",
+    "vix",
+    "rate_10y",
+    "rv_21d",
+    "hvol_30d",
+    "hvol_91d",
+    "ret_fwd",
+    "close_spy"
+  ],
+  "window": 45,
+  "txn_cost_bps": 1.0,
+  "pos_limit": 2.0,
+  "hidden": 128,
+  "lr": 0.01,
+  "steps": 8000,
+  "entropy_start": 0.15,
+  "train_end": "2017-12-31",
+  "valid_end": "2019-12-31"
+}

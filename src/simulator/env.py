@@ -26,6 +26,7 @@ class HedgingEnv:
         pos_limit: float = 1.0,
         scaler: Optional[Callable[[np.ndarray], np.ndarray]] = None,
         rng_seed: int = 0,
+        hold_on_nan: bool = True,
     ):
         """
         Args:
@@ -46,6 +47,7 @@ class HedgingEnv:
         self.scaler = scaler
         self.rng = np.random.default_rng(rng_seed)
         self.reward_fn = reward_fn
+        self.hold_on_nan = bool(hold_on_nan)
 
         # --- basic validations ---
         req_cols = set(self.features + ["ret_fwd"])
@@ -92,28 +94,32 @@ class HedgingEnv:
             w = self.scaler(w)
         # defend against any accidental NaNs/Infs in features
         return np.nan_to_num(w, nan=0.0, posinf=0.0, neginf=0.0)
-
     def step(self, action: float) -> StepOut:
         if self.done:
-            # Gym-like behavior: after done, return same obs and zero reward
             return self._obs(), 0.0, True, {"ret": 0.0, "pnl": 0.0, "pos": self.pos, "nav": self.nav, "cost": 0.0}
 
         a = float(np.clip(action, -self.pos_limit, self.pos_limit))
-        r = float(self.R[self.t])  # forward return t→t+1
+        r = float(self.R[self.t])
 
-        dpos = a - self.pos
-        cost = (self.txn_cost_bps * 1e-4) * abs(dpos)  # bps -> proportion
+        obs_now = self._obs()  # <--- cache
+        if self.hold_on_nan and (not np.isfinite(obs_now).all()):
+            a, cost = self.pos, 0.0
+        else:
+            dpos = a - self.pos
+            cost = (self.txn_cost_bps * 1e-4) * abs(dpos)
+
         pnl = a * r - cost
-
         self.nav *= (1.0 + pnl)
         self.pos = a
         self.t += 1
-        self.done = self.t >= (self.T - 1)  # last usable forward return index is T-1
+        self.done = self.t >= (self.T - 1)
 
         info = {"ret": r, "pnl": pnl, "pos": self.pos, "nav": self.nav, "cost": cost}
         reward = float(self.reward_fn(pnl, info))
-        return self._obs(), reward, self.done, info
+        next_obs = self._obs() if not self.done else obs_now  # safe if done
+        return next_obs, reward, self.done, info
 
+    
     # Convenience rollout for quick baselines/tests
     def rollout(self, policy: Callable[[np.ndarray], float], max_steps: Optional[int] = None) -> Dict[str, np.ndarray]:
         obs = self.reset()

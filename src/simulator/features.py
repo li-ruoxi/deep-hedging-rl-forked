@@ -6,14 +6,19 @@ import numpy as np
 import pyarrow.dataset as ds
 
 # ---------- helpers ----------
+# --- at top of _prep_base ---
 def _prep_base(df: pd.DataFrame) -> pd.DataFrame:
     x = df.copy()
+    if "date" in x:
+        x["date"] = pd.to_datetime(x["date"], errors="coerce").dt.normalize()
+        x = x.sort_values("date").reset_index(drop=True)
     if "put_call" in x:
         x["put_call"] = (x["put_call"].astype(str)
                            .str.strip().str.upper().str[0]
                            .map({"C":"C","P":"P"}))
     if "delta" in x and x["delta"].abs().quantile(0.99) > 2:
-        x["delta"] = x["delta"] / 100.0  # auto-rescale if vendor used ±100
+        x["delta"] = x["delta"] / 100.0  # vendor ±100 → [-1,1]
+    assert "delta" not in x or x["delta"].abs().max() <= 1.01, "Delta looks like percent; convert to [-1,1]."
     return x
 
 def _pick_atm_tolerant(df: pd.DataFrame, target_dte: int, base_delta=0.50):
