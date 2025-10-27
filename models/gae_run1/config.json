@@ -7,17 +7,14 @@
     "rate_10y",
     "rv_21d",
     "hvol_30d",
-    "hvol_91d",
-    "ret_fwd",
-    "close_spy"
+    "hvol_91d"
   ],
   "window": 45,
+  "lr": 0.001,
+  "steps": 800,
+  "train_end": "2017-12-31",
+  "valid_end": "2019-12-31",
   "txn_cost_bps": 1.0,
   "pos_limit": 2.0,
-  "hidden": 128,
-  "lr": 0.01,
-  "steps": 8000,
-  "entropy_start": 0.15,
-  "train_end": "2017-12-31",
-  "valid_end": "2019-12-31"
+  "hidden": 64
 }

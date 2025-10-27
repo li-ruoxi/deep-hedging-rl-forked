@@ -36,10 +36,15 @@ def build_sim_panel(
     spy_clean_dir: Path | None = None,
     act_at_open: bool = False,
     ffill_limit: int = 2,
-):
+) -> tuple[pd.DataFrame, list[str]]:
+    """Compose the simulation panel from market data and precomputed option features."""
+    if "date" not in market_df.columns:
+        raise ValueError("market_df must contain a 'date' column")
+
     from .features import make_option_features
     panel = market_df.copy()
-    panel["date"] = pd.to_datetime(panel["date"]).dt.normalize()
+    panel["date"] = pd.to_datetime(panel["date"], errors="coerce").dt.normalize()
+    panel = panel.dropna(subset=["date"]).reset_index(drop=True)
 
     fe_spx = make_option_features(spx_clean_dir, "spx")
     panel = panel.merge(fe_spx, on="date", how="left")
@@ -47,6 +52,8 @@ def build_sim_panel(
     if include_spy and spy_clean_dir is not None:
         fe_spy = make_option_features(spy_clean_dir, "spy")
         panel = panel.merge(fe_spy, on="date", how="left")
+    if include_spy and spy_clean_dir is None:
+        raise ValueError("spy_clean_dir must be provided when include_spy=True")
 
     # Feature columns to guard-ffill (IVs + derived IVs)
     feat_cols = [c for c in panel.columns if c.startswith(("iv_atm","iv_ts_slope","iv_skew"))]
@@ -75,5 +82,8 @@ def build_sim_panel(
         "vix","rate_10y","rv_21d","hvol_30d","hvol_91d"
     ]
     state_cols = [c for c in state_cols if c in panel.columns]
+
+    if not state_cols:
+        raise ValueError("No state features found in panel; check option feature builds.")
 
     return panel, state_cols

@@ -53,11 +53,6 @@ def load_scaler(path: Path, cols: List[str]) -> Callable[[np.ndarray], np.ndarra
         return (obs - mu) / np.where(sg == 0.0, 1.0, sg)
     return zscale
 
-# ----------------- reward -----------------
-def reward_bps(pnl, info, scale: float = 1e4):
-    from simulator.rewards import pnl_only
-    return pnl_only(pnl, info) * scale
-
 # ----------------- env factory -----------------
 def make_env(panel: pd.DataFrame, mask, features: List[str], window: int,
              txn_cost_bps: float, scaler: Callable[[np.ndarray], np.ndarray],

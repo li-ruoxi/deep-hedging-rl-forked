@@ -2,6 +2,7 @@
 from __future__ import annotations
 from pathlib import Path
 import io, zipfile
+import warnings
 import pandas as pd
 
 from .config import (
@@ -107,10 +108,10 @@ def load_timeseries_flexible(name: str) -> pd.Series | None:
             s = rename_cols(s, parse["rename_to"])
             return s
         except Exception as e:
-            print(f"⚠️ {name}: failed reading {fname}: {e}")
+            warnings.warn(f"{name}: failed reading {fname}: {e}", RuntimeWarning)
             continue
 
-    print(f"⚠️ {name}: no usable source found in {srcs}")
+    warnings.warn(f"{name}: no usable source found in {srcs}", RuntimeWarning)
     return None
 
 # ---------- Helpers for WRDS table standardization ----------

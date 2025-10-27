@@ -7,6 +7,7 @@ import torch.nn as nn
 from typing import Dict, List, Tuple
 
 from .policy_nn import PolicyNetwork, _flatten_obs
+from simulator.rewards import reward_bps as reward_bps_fn
 
 
 @dataclass
@@ -15,6 +16,8 @@ class TrainConfig:
     entropy_coef: float = 0.0    # small bonus like 1e-3 if you want exploration
     lr: float = 1e-4
     max_steps: int | None = None # None = run until env done
+    max_rollout_steps: int | None = None
+    max_episodes: int | None = None
     device: str = "cpu"
     print_every: int = 25
     normalize_returns: bool = True
@@ -30,6 +33,7 @@ def _discount_cumsum(x: np.ndarray, gamma: float) -> np.ndarray:
     return y
 
 
+@torch.no_grad()
 def evaluate_env(env, policy: PolicyNetwork, deterministic: bool = True) -> Dict[str, float]:
     """Deterministic rollout to get simple metrics."""
     obs = env.reset()
@@ -59,7 +63,8 @@ def train_reinforce(env,
 
     history: Dict[str, List[float]] = {"episode_return": [], "episode_len": [], "eval_sharpe": []}
 
-    for ep in range(1, 10_000_000):  # stop in your calling code
+    total_eps = cfg.max_episodes or 10_000_000
+    for ep in range(1, total_eps + 1):
         obs = env.reset()
         logps: List[torch.Tensor] = []
         entrs: List[torch.Tensor] = []
@@ -89,7 +94,11 @@ def train_reinforce(env,
             rewards.append(float(r))
             steps += 1
 
-            if done or (cfg.max_steps and steps >= cfg.max_steps):
+            if done:
+                break
+            if cfg.max_steps and steps >= cfg.max_steps:
+                break
+            if cfg.max_rollout_steps and steps >= cfg.max_rollout_steps:
                 break
 
         # reward-to-go (advantages)
@@ -125,7 +134,7 @@ def train_reinforce(env,
                   f"Mean Ret:{eval_metrics['mean']*1e4: .2f} bp")
 
         # simple exit condition (caller can override)
-        if ep % cfg.print_every == 0:
+        if ep % cfg.print_every == 0 and cfg.max_episodes is None:
             return history
 
     return history
@@ -133,8 +142,7 @@ def train_reinforce(env,
 # Custom reward function: PnL only, scaled to basis points
 
 def reward_bps(pnl, info):
-    from simulator.rewards import pnl_only
-    return pnl_only(pnl, info) * 1e2  # scale to basis points
+    return reward_bps_fn(pnl, info, scale=1e4)
 
 def deterministic_rewards(env, policy):
     obs = env.reset()

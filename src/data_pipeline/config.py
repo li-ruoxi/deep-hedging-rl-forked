@@ -1,12 +1,19 @@
 from __future__ import annotations
 from pathlib import Path
 
+_ROOT_CACHE: Path | None = None
+
 def _repo_root() -> Path:
+    global _ROOT_CACHE
+    if _ROOT_CACHE is not None:
+        return _ROOT_CACHE
     p = Path(__file__).resolve()
     for parent in [p] + list(p.parents):
         if (parent / ".git").exists():
+            _ROOT_CACHE = parent
             return parent
-    return Path(__file__).resolve().parents[2]
+    _ROOT_CACHE = Path(__file__).resolve().parents[2]
+    return _ROOT_CACHE
 
 ROOT = _repo_root()
 

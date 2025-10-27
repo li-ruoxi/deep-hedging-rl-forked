@@ -22,3 +22,7 @@ def mean_variance(pnl: float, info: Dict, lam: float = 5.0) -> float:
 def downside_focus(pnl: float, info: Dict, kappa: float = 5.0) -> float:
     """Penalize losses more than gains."""
     return float(pnl if pnl >= 0 else pnl * (1.0 + kappa))
+
+def reward_bps(pnl: float, info: Dict, scale: float = 1e4) -> float:
+    """Scale pnl into basis points (default: 1 bp = 1e-4)."""
+    return pnl_only(pnl, info) * float(scale)
