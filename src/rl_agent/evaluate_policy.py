@@ -7,6 +7,7 @@ import pandas as pd
 import torch
 
 from simulator.env import HedgingEnv
+from simulator.rewards import reward_bps
 from rl_agent.trainer import evaluate_env
 from rl_agent.train_ac_gae import PolicyValueNet, zscale  # reuse model + scaler helper
 
@@ -35,15 +36,11 @@ def main():
     sg = panel.loc[m_tr, cfg["features"]].std(ddof=1).replace(0, np.nan).fillna(1.0)
     scaler = lambda obs: zscale(obs, mu.values, sg.values)
 
-    def reward_bps(pnl, info):
-        from simulator.rewards import pnl_only
-        return pnl_only(pnl, info) * 1e2
-
     def make_env(mask):
         return HedgingEnv(
             df=panel.loc[mask].reset_index(drop=True),
             features=cfg["features"],
-            reward_fn=reward_bps,
+            reward_fn=lambda pnl, info: reward_bps(pnl, info, scale=1e4),
             window=cfg["window"],
             txn_cost_bps=cfg["txn_cost_bps"],
             scaler=scaler,

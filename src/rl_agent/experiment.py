@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from simulator.env import HedgingEnv
+from simulator.rewards import reward_bps
 
 # ----------------- split + checks -----------------
 def _validate_features(panel: pd.DataFrame, features: List[str]) -> None:
@@ -53,14 +54,14 @@ def load_scaler(path: Path, cols: List[str]) -> Callable[[np.ndarray], np.ndarra
     return zscale
 
 # ----------------- reward -----------------
-def reward_bps(pnl, info, scale: float = 1e2):
+def reward_bps(pnl, info, scale: float = 1e4):
     from simulator.rewards import pnl_only
     return pnl_only(pnl, info) * scale
 
 # ----------------- env factory -----------------
 def make_env(panel: pd.DataFrame, mask, features: List[str], window: int,
              txn_cost_bps: float, scaler: Callable[[np.ndarray], np.ndarray],
-             pos_limit: float, reward_scale: float = 1e2):
+             pos_limit: float, reward_scale: float = 1e4):
     return HedgingEnv(
         df=panel.loc[mask].reset_index(drop=True),
         features=features,
@@ -74,15 +75,20 @@ def make_env(panel: pd.DataFrame, mask, features: List[str], window: int,
 
 # ----------------- deterministic rollout -----------------
 def deterministic_rewards(env, policy, device: str = "cpu") -> np.ndarray:
-    import torch
-    obs = env.reset(); rr=[]
+    import numpy as np
+    obs = env.reset()
+    rewards: list[float] = []
     while True:
-        x = torch.as_tensor(obs, dtype=torch.float32, device=device)
-        a, _, _, _ = policy.act(x, deterministic=True)
-        obs, r, done, _ = env.step(a.detach().cpu().numpy())
-        rr.append(float(r))
-        if done: break
-    return np.asarray(rr, float)
+        act = policy.act(obs, deterministic=True)
+        action = act[0] if isinstance(act, tuple) else act
+        if hasattr(action, "detach"):
+            action = action.detach().cpu().numpy()
+        action = float(np.asarray(action).squeeze())
+        obs, r, done, _ = env.step(action)
+        rewards.append(float(r))
+        if done:
+            break
+    return np.asarray(rewards, float)
 
 # ----------------- metrics -----------------
 def summarize_bps(r: np.ndarray) -> dict:
@@ -109,7 +115,7 @@ class ArtifactLogger:
 # ----------------- one-call builder -----------------
 def build_envs(panel: pd.DataFrame, features: List[str], train_end: str, valid_end: str,
                window: int, txn_cost_bps: float, pos_limit: float,
-               reward_scale: float = 1e2,
+               reward_scale: float = 1e4,
                scaler_out: Path | None = None):
     _validate_features(panel, features)
     p, m_tr, m_va, m_te, TRAIN_END, VALID_END = make_splits(panel, train_end, valid_end)

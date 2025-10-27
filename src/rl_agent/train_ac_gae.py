@@ -85,10 +85,23 @@ class PolicyValueNet(nn.Module):
         std = torch.exp(self.log_std).expand_as(mu)
         return mu, std, v
 
-    def act(self, x, deterministic: bool = False, device: str = "cpu"):
-        if self.obs_fix is not None and isinstance(x, np.ndarray):
-            x = self.obs_fix(x)  # -> fixed 1D length input_dim
-        x = self._to_tensor(x, device=device)
+    @torch.no_grad()
+    def act(self, obs, deterministic: bool = False, device: str = "cpu"):
+        import numpy as _np
+
+        if self.obs_fix is not None:
+            if isinstance(obs, np.ndarray):
+                obs = self.obs_fix(obs)
+            elif torch.is_tensor(obs):
+                obs = self.obs_fix(obs.detach().cpu().numpy())
+            else:
+                obs = self.obs_fix(_np.asarray(obs))
+
+        x = self._to_tensor(obs, device=device)
+        if x.dim() == 1:
+            x = x.unsqueeze(0)
+        else:
+            x = x.reshape(1, -1)
 
         mu, std, _ = self.forward(x)
         a = mu if deterministic else (mu + std * torch.randn_like(std))
@@ -104,7 +117,6 @@ class PolicyValueNet(nn.Module):
 # GAE + Rollout
 # =======================================================
 @torch.no_grad()
-
 def compute_gae(rews, vals, dones, gamma=0.99, lam=0.95):
     """
     rews: np.array shape [T]
@@ -171,11 +183,13 @@ def make_obs_fixer(window: int, n_features: int, dtype=np.float32):
     return to_fixed
 
 # in rollout_episode
-def rollout_episode(env, policy: PolicyValueNet, to_fixed, device="cpu", deterministic=False):
+def rollout_episode(env, policy: PolicyValueNet, to_fixed, device="cpu",
+                    deterministic=False, max_steps: int | None = None):
     import math as _math
     obs = env.reset()
     rews, dones = [], []
     logps_t, states_t, vals_t = [], [], []
+    steps = 0
 
     while True:
         x_np = to_fixed(obs)
@@ -189,14 +203,33 @@ def rollout_episode(env, policy: PolicyValueNet, to_fixed, device="cpu", determi
         logp = -0.5 * (((a - mu) / std)**2 + 2*torch.log(std) + _math.log(2*_math.pi))
         logp = logp.sum()
 
-        obs, r, done, _ = env.step(a.detach().cpu().numpy())
+        action = a.detach().cpu().numpy()
+        obs_next, r, done, _ = env.step(action)
         rews.append(float(r)); dones.append(bool(done))
         logps_t.append(logp); states_t.append(x); vals_t.append(v.detach())
 
-        if done: break
+        obs = obs_next
+        steps += 1
+        if done or (max_steps is not None and steps >= max_steps):
+            break
 
-    vals_boot = np.asarray([vv.cpu().item() for vv in vals_t] + [0.0], dtype=np.float32)
-    return np.asarray(rews, np.float32), torch.stack(logps_t), vals_boot, np.asarray(dones, bool), torch.stack(states_t)
+    if dones and not dones[-1]:
+        with torch.no_grad():
+            x_boot = torch.as_tensor(to_fixed(obs), dtype=torch.float32, device=device)
+            _, _, v_boot = policy.forward(x_boot.reshape(1, -1))
+            bootstrap_v = float(v_boot.squeeze().cpu().item())
+    else:
+        bootstrap_v = 0.0
+
+    vals_boot = np.asarray([vv.cpu().item() for vv in vals_t] + [bootstrap_v], dtype=np.float32)
+    return (
+        np.asarray(rews, np.float32),
+        torch.stack(logps_t),
+        vals_boot,
+        np.asarray(dones, bool),
+        torch.stack(states_t),
+        steps,
+    )
 
 
 # =======================================================
@@ -213,12 +246,19 @@ def train(panel: pd.DataFrame,
           lr=1e-3,
           steps=8000,
           entropy_start=0.5,
+          entropy_end=0.0,
+          eval_every=50,
+          max_rollout_steps: int | None = None,
+          track_history: bool = False,
+          return_history: bool = False,
           device="cpu",
           seed=42,
           save_ckpt: str | None = None,
           save_config: str | None = None,
-          save_outdir: str | None = None):
+          save_outdir: str | None = None,
+          verbose: bool = True):
     set_seed(seed)
+    return_history = return_history or track_history
 
     # ----- envs / scaler (no leakage) -----
     envs = build_envs(panel, state_cols, train_end, valid_end,
@@ -227,7 +267,8 @@ def train(panel: pd.DataFrame,
     n_features = len(state_cols)
     input_dim  = window * n_features
     to_fixed   = make_obs_fixer(window, n_features)
-    print(f"Env(train) ready. input_dim={input_dim} (window={window}, n_features={n_features})")
+    if verbose:
+        print(f"Env(train) ready. input_dim={input_dim} (window={window}, n_features={n_features})")
 
     # ----- model + optimizer -----
     policy = PolicyValueNet(input_dim=input_dim, hidden=hidden).to(device)
@@ -237,18 +278,32 @@ def train(panel: pd.DataFrame,
     best = {'sharpe': -np.inf, 'sdict': None}
     gamma, lam = 0.99, 0.95
 
+    history = None
+    if return_history:
+        history = {
+            "step": [],
+            "episode_return": [],
+            "episode_len": [],
+            "entropy_coef": [],
+            "policy_loss": [],
+            "value_loss": [],
+            "eval_step": [],
+            "train_sharpe": [],
+            "valid_sharpe": [],
+        }
+
     for step in range(1, steps + 1):
         # schedules
-        ent_horizon = int(0.35 * steps)               # faster fade
-        ent_coef = linear_anneal(step, ent_horizon, start=entropy_start, end=0.0)
-        #ent_coef = linear_anneal(step, steps, start=entropy_start, end=0.0)
+        ent_horizon = max(1, int(0.35 * steps))
+        ent_coef = linear_anneal(step, ent_horizon, start=entropy_start, end=entropy_end)
         for g in opt.param_groups:
             g['lr'] = cosine_lr(lr, step, steps)
 
         # rollout on TRAIN
-        rews, logps_t, vals_boot, dones, states_t = rollout_episode(
-            env_tr, policy, to_fixed=to_fixed, device=device, deterministic=False
-            )
+        rews, logps_t, vals_boot, dones, states_t, ep_len = rollout_episode(
+            env_tr, policy, to_fixed=to_fixed, device=device,
+            deterministic=False, max_steps=max_rollout_steps
+        )
 
         # GAE
         adv, ret = compute_gae(rews, vals_boot, dones, gamma=gamma, lam=lam)
@@ -258,11 +313,12 @@ def train(panel: pd.DataFrame,
         # recompute policy/value on saved states WITH gradient
         mu_batch, std_batch, v_pred = policy.forward(states_t)
         # policy loss (use stored logps_t OR recompute; logps_t is fine)
-        policy_loss = -(logps_t * ( (adv_t - adv_t.mean()) / (adv_t.std() + 1e-8) )).mean()
+        adv_norm = (adv_t - adv_t.mean()) / (adv_t.std(unbiased=False) + 1e-8)
+        policy_loss = -(logps_t * adv_norm).mean()
         # value loss
         value_loss = 0.5 * ((v_pred - ret_t) ** 2).mean()
         # analytic Gaussian entropy per state: 0.5*log(2πeσ^2)
-        entropy = (0.5 * (1.0 + math.log(2 * math.pi)) + torch.log(std_batch)).sum(dim=1).mean()
+        entropy = (0.5 * (1.0 + math.log(2 * math.pi)) + torch.log(std_batch.clamp_min(1e-6))).sum(dim=1).mean()
 
         loss = policy_loss + value_loss - ent_coef * entropy
 
@@ -271,13 +327,30 @@ def train(panel: pd.DataFrame,
         torch.nn.utils.clip_grad_norm_(policy.parameters(), 1.0)
         opt.step()
 
-        if step % 50 == 0:
-            tr = evaluate_env(env_tr, policy, deterministic=True)
-            va = evaluate_env(env_va, policy, deterministic=True)
-            print(f"[{step:05d}] "
-                  f"Train Sharpe {tr['sharpe']:.3f} | "
-                  f"Valid Sharpe {va['sharpe']:.3f} | "
-                  f"LR {opt.param_groups[0]['lr']:.2e} | Ent {ent_coef:.3f}")
+        if history is not None:
+            history["step"].append(step)
+            history["episode_return"].append(float(np.sum(rews)))
+            history["episode_len"].append(int(ep_len))
+            history["entropy_coef"].append(float(ent_coef))
+            history["policy_loss"].append(float(policy_loss.detach().cpu().item()))
+            history["value_loss"].append(float(value_loss.detach().cpu().item()))
+
+        if step % eval_every == 0:
+            policy.eval()
+            with torch.no_grad():
+                tr = evaluate_env(env_tr, policy, deterministic=True)
+                va = evaluate_env(env_va, policy, deterministic=True)
+            policy.train()
+            if verbose:
+                print(f"[{step:05d}] "
+                      f"Train Sharpe {tr['sharpe']:.3f} | "
+                      f"Valid Sharpe {va['sharpe']:.3f} | "
+                      f"LR {opt.param_groups[0]['lr']:.2e} | Ent {ent_coef:.3f}")
+
+            if history is not None:
+                history["eval_step"].append(step)
+                history["train_sharpe"].append(float(tr['sharpe']))
+                history["valid_sharpe"].append(float(va['sharpe']))
 
             if va['sharpe'] > best['sharpe']:
                 best['sharpe'] = va['sharpe']
@@ -295,13 +368,18 @@ def train(panel: pd.DataFrame,
 
     if best['sdict'] is not None:
         policy.load_state_dict(best['sdict'])
-        print(f"Loaded best checkpoint (valid Sharpe={best['sharpe']:.3f}).")
+        if verbose:
+            print(f"Loaded best checkpoint (valid Sharpe={best['sharpe']:.3f}).")
 
     # Final evaluation
     tr = evaluate_env(env_tr, policy, deterministic=True)
     va = evaluate_env(env_va, policy, deterministic=True)
     te = evaluate_env(env_te, policy, deterministic=True)
-    print("FINAL:", json.dumps({"train": tr, "valid": va, "test": te}, indent=2))
+    if verbose:
+        print("FINAL:", json.dumps({"train": tr, "valid": va, "test": te}, indent=2))
+
+    if history is not None:
+        history["final"] = {"train": tr, "valid": va, "test": te}
 
     # Optional artifact bundle (results + curves + config)
     if save_outdir:
@@ -321,7 +399,11 @@ def train(panel: pd.DataFrame,
                 txn_cost_bps=txn_cost_bps, pos_limit=pos_limit, hidden=hidden
             ),
         )
+        if history is not None:
+            (out / "history.json").write_text(json.dumps(history, indent=2, default=float))
 
+    if return_history:
+        return policy, (tr, va, te), history
     return policy, (tr, va, te)
 
 # =======================================================
@@ -339,6 +421,13 @@ def parse_args():
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--steps", type=int, default=8000)
     p.add_argument("--entropy_start", type=float, default=0.5)
+    p.add_argument("--entropy_end", type=float, default=0.0)
+    p.add_argument("--eval_every", type=int, default=50)
+    p.add_argument("--max_rollout_steps", type=int, default=0,
+                   help="If >0, truncate training rollouts to this many steps")
+    p.add_argument("--track_history", action="store_true",
+                   help="Record per-step training metrics and return them from train()")
+    p.add_argument("--quiet", action="store_true", help="Suppress training logs")
     p.add_argument("--device", type=str, default="cpu")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--train_end", type=str, default="2017-12-31")
@@ -355,7 +444,7 @@ def main():
     missing = [c for c in feats if c not in panel.columns]
     if missing:
         raise ValueError(f"Missing features in panel: {missing}")
-    policy, _ = train(
+    train(
         panel=panel,
         state_cols=feats,
         train_end=args.train_end,
@@ -372,8 +461,13 @@ def main():
         save_ckpt=(args.save_ckpt or None),
         save_config=(args.save_config or None),
         save_outdir=(args.save_outdir or (str(Path(args.save_ckpt).parent) if args.save_ckpt else None)),
+        entropy_end=args.entropy_end,
+        eval_every=args.eval_every,
+        max_rollout_steps=(args.max_rollout_steps or None),
+        track_history=args.track_history,
+        verbose=not args.quiet,
     )
+
 
 if __name__ == "__main__":
     main()
-
