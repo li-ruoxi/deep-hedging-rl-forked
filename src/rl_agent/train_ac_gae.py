@@ -91,11 +91,14 @@ class PolicyValueNet(nn.Module):
         x = self._to_tensor(x, device=device)
 
         mu, std, _ = self.forward(x)
-        a = mu if deterministic else (mu + std * torch.randn_like(std))
+        dist = torch.distributions.Normal(mu, std)
+        z = mu if deterministic else dist.rsample()
+        a = torch.tanh(z)
+        pos_limit = float(getattr(self, "pos_limit", 1.0))
+        scaled = a * pos_limit
 
-        # ↓↓↓ RETURN DETACHED NUMPY (important for evaluate_env/env.step)
-        a_out   = a.clamp(-1, 1)[0].detach().cpu().numpy()
-        mu_out  = mu[0].detach().cpu().numpy()
+        a_out   = scaled[0].detach().cpu().numpy()
+        mu_out  = (torch.tanh(mu)[0] * pos_limit).detach().cpu().numpy()
         std_out = std[0].detach().cpu().numpy()
         return a_out, mu_out, std_out
 
@@ -187,10 +190,14 @@ def rollout_episode(env, policy: PolicyValueNet, to_fixed, device="cpu",
         mu, std, v = policy.forward(x)
         dist = torch.distributions.Normal(mu, std)
         z = mu if deterministic else dist.rsample()
-        logp = dist.log_prob(z).sum()
-        action_tensor = torch.clamp(z, -pos_limit, pos_limit)
+        a = torch.tanh(z)
+        scaled_action = a * pos_limit
 
-        action = action_tensor.detach().cpu().numpy()
+        # SAC-style tanh correction keeps gradients consistent with the squashed action
+        logp = dist.log_prob(z) - torch.log1p(-a.pow(2) + 1e-6) - math.log(pos_limit)
+        logp = logp.sum()
+
+        action = scaled_action.detach().cpu().numpy()
         obs_next, r, done, _ = env.step(action)
         rews.append(float(r)); dones.append(bool(done))
         logps_t.append(logp); states_t.append(x); vals_t.append(v.detach())
@@ -228,16 +235,19 @@ def train(panel: pd.DataFrame,
           valid_end="2019-12-31",
           window=45,
           txn_cost_bps=1.0,
-          pos_limit=2.0,
-          hidden=128,
+          pos_limit=2.0, #position limit per option unit
+          hidden=128, # hidden dim
           lr=1e-3,
           steps=8000,
           entropy_start=0.5,
+          entropy_floor: float = 0.0,
           max_rollout_steps: int | None = None,
           track_history: bool = False,
           return_history: bool = False,
           device="cpu",
           seed=42,
+          weight_decay: float = 0.0,
+          early_stop_patience: int | None = None,
           save_ckpt: str | None = None,
           save_config: str | None = None,
           save_outdir: str | None = None):
@@ -256,8 +266,9 @@ def train(panel: pd.DataFrame,
 
     # ----- model + optimizer -----
     policy = PolicyValueNet(input_dim=input_dim, hidden=hidden).to(device)
-    opt = optim.Adam(policy.parameters(), lr=lr)
+    opt = optim.Adam(policy.parameters(), lr=lr, weight_decay=weight_decay)
     policy.obs_fix = to_fixed
+    policy.pos_limit = float(pos_limit)
 
     best = {'sharpe': -np.inf, 'sdict': None}
     gamma, lam = 0.99, 0.95
@@ -276,11 +287,13 @@ def train(panel: pd.DataFrame,
             "valid_sharpe": [],
         }
 
+    best_step = 0
+
     for step in range(1, steps + 1):
         # schedules
         ent_horizon = int(0.35 * steps)               # faster fade
-        ent_coef = linear_anneal(step, ent_horizon, start=entropy_start, end=0.0)
-        #ent_coef = linear_anneal(step, steps, start=entropy_start, end=0.0)
+        ent_coef = linear_anneal(step, ent_horizon, start=entropy_start, end=entropy_floor)
+        ent_coef = max(entropy_floor, ent_coef)
         for g in opt.param_groups:
             g['lr'] = cosine_lr(lr, step, steps)
 
@@ -343,6 +356,7 @@ def train(panel: pd.DataFrame,
             if va['sharpe'] > best['sharpe']:
                 best['sharpe'] = va['sharpe']
                 best['sdict'] = {k: v.detach().cpu().clone() for k, v in policy.state_dict().items()}
+                best_step = step
                 if save_ckpt:
                     Path(save_ckpt).parent.mkdir(parents=True, exist_ok=True)
                     torch.save(best['sdict'], save_ckpt)
@@ -350,10 +364,15 @@ def train(panel: pd.DataFrame,
                         cfg = dict(
                             features=state_cols, window=window, txn_cost_bps=txn_cost_bps,
                             pos_limit=pos_limit, hidden=hidden, lr=lr, steps=steps,
-                            entropy_start=entropy_start, train_end=train_end, valid_end=valid_end,
+                            entropy_start=entropy_start, entropy_floor=entropy_floor,
+                            weight_decay=weight_decay, early_stop_patience=early_stop_patience,
+                            train_end=train_end, valid_end=valid_end,
                         )
                         Path(save_config).write_text(json.dumps(cfg, indent=2))
 
+        if early_stop_patience is not None and (step - best_step) >= early_stop_patience:
+            print(f"Early stopping at step {step} (no valid improvement for {early_stop_patience} steps).")
+            break
     if best['sdict'] is not None:
         policy.load_state_dict(best['sdict'])
         print(f"Loaded best checkpoint (valid Sharpe={best['sharpe']:.3f}).")
@@ -379,7 +398,9 @@ def train(panel: pd.DataFrame,
             config=dict(
                 features=state_cols, window=window, lr=lr, steps=steps,
                 train_end=train_end, valid_end=valid_end,
-                txn_cost_bps=txn_cost_bps, pos_limit=pos_limit, hidden=hidden
+                txn_cost_bps=txn_cost_bps, pos_limit=pos_limit, hidden=hidden,
+                entropy_start=entropy_start, entropy_floor=entropy_floor,
+                weight_decay=weight_decay, early_stop_patience=early_stop_patience
             ),
         )
 
@@ -405,6 +426,7 @@ def parse_args():
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--steps", type=int, default=8000)
     p.add_argument("--entropy_start", type=float, default=0.5)
+    p.add_argument("--entropy_floor", type=float, default=0.0)
     p.add_argument("--max_rollout_steps", type=int, default=0,
                    help="If >0, truncate each training rollout to this many steps")
     p.add_argument("--track_history", action="store_true",
@@ -413,6 +435,9 @@ def parse_args():
                    help="Suppress training logs")
     p.add_argument("--device", type=str, default="cpu")
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--weight_decay", type=float, default=0.0)
+    p.add_argument("--early_stop_patience", type=int, default=0,
+                   help="If >0, stop after this many steps without valid Sharpe improvement")
     p.add_argument("--train_end", type=str, default="2017-12-31")
     p.add_argument("--valid_end", type=str, default="2019-12-31")
     p.add_argument("--save_ckpt", type=str, default="", help="Path to save best .pt")
@@ -439,10 +464,13 @@ def main():
         lr=args.lr,
         steps=args.steps,
         entropy_start=args.entropy_start,
+        entropy_floor=args.entropy_floor,
         max_rollout_steps=(args.max_rollout_steps or None),
         track_history=args.track_history,
         device=args.device,
         seed=args.seed,
+        weight_decay=args.weight_decay,
+        early_stop_patience=(args.early_stop_patience or None),
         save_ckpt=(args.save_ckpt or None),
         save_config=(args.save_config or None),
         save_outdir=(args.save_outdir or (str(Path(args.save_ckpt).parent) if args.save_ckpt else None)),

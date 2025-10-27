@@ -51,6 +51,8 @@ def main():
     env_tr, env_va, env_te = make_env(m_tr), make_env(m_va), make_env(m_te)
     input_dim = env_tr.reset().size
     net = PolicyValueNet(input_dim=input_dim, hidden=cfg["hidden"]).to(args.device)
+    net.obs_fix = lambda obs: np.asarray(obs, dtype=np.float32).reshape(-1)
+    net.pos_limit = float(cfg["pos_limit"])
     state_dict = torch.load(args.ckpt, map_location=args.device)
     net.load_state_dict(state_dict)
 

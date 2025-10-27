@@ -9,12 +9,16 @@
     "hvol_30d",
     "hvol_91d"
   ],
-  "window": 45,
-  "lr": 0.001,
-  "steps": 800,
+  "window": 30,
+  "lr": 0.0005,
+  "steps": 2500,
   "train_end": "2017-12-31",
   "valid_end": "2019-12-31",
   "txn_cost_bps": 1.0,
-  "pos_limit": 2.0,
-  "hidden": 64
+  "pos_limit": 1.0,
+  "hidden": 256,
+  "entropy_start": 0.01,
+  "entropy_floor": 0.01,
+  "weight_decay": 0.0001,
+  "early_stop_patience": 300
 }
