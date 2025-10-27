@@ -13,4 +13,4 @@ def validate_raw():
             errors.append(f"{fname}: {e}")
     if errors:
         raise SystemExit("Raw checks failed:\n- " + "\n- ".join(errors))
-    print("All raw files present & materialized ✅")
+    print("All raw files present & materialized ")

@@ -29,9 +29,9 @@ def build_market_daily(save: bool = True) -> pd.DataFrame:
 
     # Soft checks with warnings instead of hard asserts:
     if "close_spy" in df and df["close_spy"].notna().mean() <= 0.90:
-        print("⚠️ SPY has many NaNs — verify source file/columns. Proceeding anyway.")
+        print("SPY has many NaNs — verify source file/columns. Proceeding anyway.")
     if "close_spy" not in df and "close_gspc" not in df:
-        print("⚠️ Neither SPY nor GSPC loaded — panel will lack an equity price series.")
+        print("Neither SPY nor GSPC loaded — panel will lack an equity price series.")
 
     if save:
         save_parquet(df, Path(PROCESSED_DIR) / "market_daily.parquet")
