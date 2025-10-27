@@ -1,6 +1,7 @@
 # simulator/build_panel.py
 from __future__ import annotations
 from pathlib import Path
+import warnings
 import pandas as pd
 from .features import make_option_features
 import numpy as np
@@ -65,14 +66,35 @@ def build_sim_panel(
     panel = panel.sort_values("date").reset_index(drop=True)
 
     # --- Forward return definition is explicit by action time ---
-    if act_at_open and {"open_spy"}.issubset(panel.columns):
-        # Decide at open_t, realize open_t -> open_{t+1}
-        panel["ret_fwd"] = panel["open_spy"].shift(-1) / panel["open_spy"] - 1.0
-        # Features available at decision time: use values as of open_t
-        # (they are already aligned on date; do NOT shift again)
+    if act_at_open:
+        if "open_spy" in panel.columns:
+            price_col = "open_spy"
+            panel["ret_fwd"] = panel[price_col].shift(-1) / panel[price_col] - 1.0
+        else:
+            fallback_cols = ["open_gspc", "close_spy", "close_gspc"]
+            price_col = next((c for c in fallback_cols if c in panel.columns), None)
+            if price_col is None:
+                raise ValueError(
+                    "Cannot compute forward returns: expected 'open_spy' "
+                    "or a fallback like 'open_gspc'/'close_spy'/'close_gspc'."
+                )
+            warnings.warn(
+                f"'open_spy' not found; using '{price_col}' to compute forward returns.",
+                RuntimeWarning,
+            )
+            if price_col.startswith("open"):
+                panel["ret_fwd"] = panel[price_col].shift(-1) / panel[price_col] - 1.0
+            else:
+                panel["ret_fwd"] = panel[price_col].pct_change().shift(-1)
     else:
-        # Decide at close_t, realize close_t -> close_{t+1}
-        panel["ret_fwd"] = panel["close_spy"].pct_change().shift(-1)
+        close_candidates = ["close_spy", "close_gspc"]
+        price_col = next((c for c in close_candidates if c in panel.columns), None)
+        if price_col is None:
+            raise ValueError(
+                "Cannot compute forward returns: provide a close price column "
+                "(e.g., 'close_spy' or 'close_gspc')."
+            )
+        panel["ret_fwd"] = panel[price_col].pct_change().shift(-1)
 
     panel = panel.dropna(subset=["ret_fwd"]).reset_index(drop=True)
 

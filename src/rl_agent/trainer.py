@@ -133,10 +133,6 @@ def train_reinforce(env,
                   f"Eval Sharpe:{eval_metrics['sharpe']:.3f}  "
                   f"Mean Ret:{eval_metrics['mean']*1e4: .2f} bp")
 
-        # simple exit condition (caller can override)
-        if ep % cfg.print_every == 0 and cfg.max_episodes is None:
-            return history
-
     return history
 
 # Custom reward function: PnL only, scaled to basis points

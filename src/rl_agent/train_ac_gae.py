@@ -173,11 +173,11 @@ def make_obs_fixer(window: int, n_features: int, dtype=np.float32):
 # in rollout_episode
 def rollout_episode(env, policy: PolicyValueNet, to_fixed, device="cpu",
                     deterministic=False, max_steps: int | None = None):
-    import math as _math
     obs = env.reset()
     rews, dones = [], []
     logps_t, states_t, vals_t = [], [], []
     steps = 0
+    pos_limit = float(getattr(env, "pos_limit", 1.0))
 
     while True:
         x_np = to_fixed(obs)
@@ -185,13 +185,12 @@ def rollout_episode(env, policy: PolicyValueNet, to_fixed, device="cpu",
 
         # get mu, std, v with grad; draw action separately
         mu, std, v = policy.forward(x)
-        a = mu if deterministic else (mu + std * torch.randn_like(std))
+        dist = torch.distributions.Normal(mu, std)
+        z = mu if deterministic else dist.rsample()
+        logp = dist.log_prob(z).sum()
+        action_tensor = torch.clamp(z, -pos_limit, pos_limit)
 
-        # Gaussian log-prob (scalar)
-        logp = -0.5 * (((a - mu) / std)**2 + 2*torch.log(std) + _math.log(2*_math.pi))
-        logp = logp.sum()
-
-        action = a.detach().cpu().numpy()
+        action = action_tensor.detach().cpu().numpy()
         obs_next, r, done, _ = env.step(action)
         rews.append(float(r)); dones.append(bool(done))
         logps_t.append(logp); states_t.append(x); vals_t.append(v.detach())
@@ -299,7 +298,15 @@ def train(panel: pd.DataFrame,
         # recompute policy/value on saved states WITH gradient
         mu_batch, std_batch, v_pred = policy.forward(states_t)
         # policy loss (use stored logps_t OR recompute; logps_t is fine)
-        policy_loss = -(logps_t * ( (adv_t - adv_t.mean()) / (adv_t.std() + 1e-8) )).mean()
+        if adv_t.numel() > 1:
+            denom = adv_t.std(unbiased=False)
+            if denom > 1e-6:
+                adv_norm = (adv_t - adv_t.mean()) / (denom + 1e-8)
+            else:
+                adv_norm = adv_t - adv_t.mean()
+        else:
+            adv_norm = adv_t
+        policy_loss = -(logps_t * adv_norm).mean()
         # value loss
         value_loss = 0.5 * ((v_pred - ret_t) ** 2).mean()
         # analytic Gaussian entropy per state: 0.5*log(2πeσ^2)

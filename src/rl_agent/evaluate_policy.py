@@ -9,7 +9,7 @@ import torch
 from simulator.env import HedgingEnv
 from simulator.rewards import reward_bps
 from rl_agent.trainer import evaluate_env
-from rl_agent.train_ac_gae import PolicyValueNet, zscale  # reuse model + scaler helper
+from rl_agent.train_ac_gae import PolicyValueNet
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -34,7 +34,7 @@ def main():
 
     mu = panel.loc[m_tr, cfg["features"]].mean()
     sg = panel.loc[m_tr, cfg["features"]].std(ddof=1).replace(0, np.nan).fillna(1.0)
-    scaler = lambda obs: zscale(obs, mu.values, sg.values)
+    scaler = lambda obs: (obs - mu.values) / sg.values
 
     def make_env(mask):
         return HedgingEnv(
