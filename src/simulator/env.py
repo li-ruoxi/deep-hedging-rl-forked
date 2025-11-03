@@ -14,6 +14,7 @@ class HedgingEnv:
     - Reward: user-supplied function of (pnl, info), where info includes ret, nav, pos, cost, pnl.
     - Costs: charged on CHANGE in position (Δpos) using txn_cost_bps.
     - Returns: uses forward return R[t] = r(t→t+1) — no look-ahead.
+    - Episode end: at internal index t >= T-1 so the last realized return is R[T-2].
     """
 
     def __init__(

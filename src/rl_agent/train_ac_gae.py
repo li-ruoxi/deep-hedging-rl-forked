@@ -193,7 +193,8 @@ def rollout_episode(env, policy: PolicyValueNet, to_fixed, device="cpu",
         a = torch.tanh(z)
         scaled_action = a * pos_limit
 
-        # SAC-style tanh correction keeps gradients consistent with the squashed action
+        # SAC-style tanh correction keeps gradients consistent with the squashed action.
+        # Subtract log(pos_limit) to account for post-tanh action scaling by pos_limit.
         logp = dist.log_prob(z) - torch.log1p(-a.pow(2) + 1e-6) - math.log(pos_limit)
         logp = logp.sum()
 

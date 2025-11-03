@@ -52,3 +52,7 @@ conda activate deep-hedging-rl
 git lfs install && git lfs pull
 pip install -r requirements.txt
 python -m data_pipeline.cli all
+
+Notes:
+- Parquet support requires `pyarrow` (included in both `environment.yml` and `requirements.txt`).
+- Large data files are tracked via Git LFS; ensure `git lfs pull` completes before running the pipeline.

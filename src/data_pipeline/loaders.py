@@ -29,8 +29,8 @@ def _read_any(path: Path) -> pd.DataFrame:
         return pd.read_parquet(path)
     if suf == ".zip":
         with zipfile.ZipFile(path, "r") as zf:
-            members = [n for n in zf.namelist()
-                       if n.lower().endswith((".csv", ".parquet"))]
+            members = sorted([n for n in zf.namelist()
+                              if n.lower().endswith((".csv", ".parquet"))])
             if not members:
                 raise ValueError(f"No CSV/Parquet inside {path.name}. Members: {zf.namelist()}")
             name = members[0]

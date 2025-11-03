@@ -18,7 +18,8 @@ def _prep_base(df: pd.DataFrame) -> pd.DataFrame:
                            .map({"C":"C","P":"P"}))
     if "delta" in x and x["delta"].abs().quantile(0.99) > 2:
         x["delta"] = x["delta"] / 100.0  # vendor ±100 → [-1,1]
-    assert "delta" not in x or x["delta"].abs().max() <= 1.01, "Delta looks like percent; convert to [-1,1]."
+    if "delta" in x and x["delta"].abs().max() > 1.01:
+        raise ValueError("Delta appears out of [-1,1]. Convert percent deltas to fraction before feature selection.")
     return x
 
 def _pick_atm_tolerant(df: pd.DataFrame, target_dte: int, base_delta=0.50):
@@ -31,7 +32,7 @@ def _pick_atm_tolerant(df: pd.DataFrame, target_dte: int, base_delta=0.50):
         if z.empty: continue
         z["dte_diff"] = (z["tenor_d"] - target_dte).abs()
         z["atm_diff"] = (z["abs_delta"] - base_delta).abs()
-        z["spread"]   = z["ask"] - z["bid"]
+        z["spread"]   = (z["ask"] - z["bid"]) if {"ask","bid"}.issubset(z.columns) else 0.0
         y = (z.sort_values(["date","dte_diff","atm_diff","spread"])
                .drop_duplicates("date"))
         if len(y): return y[["date","iv"]]
@@ -40,7 +41,7 @@ def _pick_atm_tolerant(df: pd.DataFrame, target_dte: int, base_delta=0.50):
     if z.empty: return pd.DataFrame(columns=["date","iv"])
     z["abs_delta"] = z["delta"].abs()
     z["atm_diff"]  = (z["abs_delta"] - base_delta).abs()
-    z["spread"]    = z["ask"] - z["bid"]
+    z["spread"]    = (z["ask"] - z["bid"]) if {"ask","bid"}.issubset(z.columns) else 0.0
     y = (z.sort_values(["date","atm_diff","spread"])
            .drop_duplicates("date"))
     return y[["date","iv"]]
@@ -55,7 +56,7 @@ def _pick_25d_wings_by_date(df: pd.DataFrame, target_dte=30):
         if z.empty: continue
         z["dte_diff"] = (z["tenor_d"] - target_dte).abs()
         z["d_diff"]   = (z["abs_delta"] - 0.25).abs()
-        z["spread"]   = z["ask"] - z["bid"]
+        z["spread"]   = (z["ask"] - z["bid"]) if {"ask","bid"}.issubset(z.columns) else 0.0
         best = (z.sort_values(["date","put_call","dte_diff","d_diff","spread"])
                  .groupby(["date","put_call"], as_index=False)
                  .first())
@@ -68,7 +69,7 @@ def _pick_25d_wings_by_date(df: pd.DataFrame, target_dte=30):
         if z.empty:
             return pd.DataFrame(columns=["date","iv_put25_30d","iv_call25_30d","iv_skew_30d"])
         z["d_diff"] = (z["abs_delta"] - 0.25).abs()
-        z["spread"] = z["ask"] - z["bid"]
+        z["spread"] = (z["ask"] - z["bid"]) if {"ask","bid"}.issubset(z.columns) else 0.0
         best = (z.sort_values(["date","put_call","d_diff","spread"])
                  .groupby(["date","put_call"], as_index=False)
                  .first())

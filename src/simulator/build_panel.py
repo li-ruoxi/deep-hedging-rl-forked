@@ -59,7 +59,7 @@ def build_sim_panel(
     # Feature columns to guard-ffill (IVs + derived IVs)
     feat_cols = [c for c in panel.columns if c.startswith(("iv_atm","iv_ts_slope","iv_skew"))]
 
-    # Guarded ffill by staleness in business days
+    # Guarded forward-fill by staleness measured in calendar days
     if ffill_limit:
         panel = _guarded_ffill_on_staleness(panel, feat_cols, max_ff_days=ffill_limit)
 

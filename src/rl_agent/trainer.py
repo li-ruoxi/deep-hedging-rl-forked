@@ -7,7 +7,6 @@ import torch.nn as nn
 from typing import Dict, List, Tuple
 
 from .policy_nn import PolicyNetwork, _flatten_obs
-from simulator.rewards import reward_bps as reward_bps_fn
 
 
 @dataclass
@@ -135,21 +134,6 @@ def train_reinforce(env,
 
     return history
 
-# Custom reward function: PnL only, scaled to basis points
-
-def reward_bps(pnl, info):
-    return reward_bps_fn(pnl, info, scale=1e4)
-
-def deterministic_rewards(env, policy):
-    obs = env.reset()
-    rr = []
-    while True:
-        a, _, _ = policy.act(obs, deterministic=True)
-        obs, r, done, _ = env.step(a)
-        rr.append(r)
-        if done: break
-    return np.asarray(rr, float)
-
-def ann_sharpe(r):
-    sd = r.std(ddof=1)
-    return (r.mean()/sd*np.sqrt(252)) if sd > 0 else 0.0
+# Re-export canonical helpers to avoid duplication
+from simulator.rewards import reward_bps  # noqa: E402,F401
+from rl_agent.experiment import deterministic_rewards  # noqa: E402,F401

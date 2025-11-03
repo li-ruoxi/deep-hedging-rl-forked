@@ -9,7 +9,7 @@ import torch
 from simulator.env import HedgingEnv
 from simulator.rewards import reward_bps
 from rl_agent.trainer import evaluate_env
-from rl_agent.train_ac_gae import PolicyValueNet
+from rl_agent.train_ac_gae import PolicyValueNet, make_obs_fixer
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -51,7 +51,8 @@ def main():
     env_tr, env_va, env_te = make_env(m_tr), make_env(m_va), make_env(m_te)
     input_dim = env_tr.reset().size
     net = PolicyValueNet(input_dim=input_dim, hidden=cfg["hidden"]).to(args.device)
-    net.obs_fix = lambda obs: np.asarray(obs, dtype=np.float32).reshape(-1)
+    # Robustly map (window x features) observations to the flattened input expected by the net
+    net.obs_fix = make_obs_fixer(cfg["window"], len(cfg["features"]))
     net.pos_limit = float(cfg["pos_limit"])
     state_dict = torch.load(args.ckpt, map_location=args.device)
     net.load_state_dict(state_dict)

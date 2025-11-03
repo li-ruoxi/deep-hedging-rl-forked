@@ -1,4 +1,5 @@
 from __future__ import annotations
+import warnings
 import pandas as pd
 from pathlib import Path
 from .config import PROCESSED_DIR
@@ -29,9 +30,9 @@ def build_market_daily(save: bool = True) -> pd.DataFrame:
 
     # Soft checks with warnings instead of hard asserts:
     if "close_spy" in df and df["close_spy"].notna().mean() <= 0.90:
-        print("SPY has many NaNs — verify source file/columns. Proceeding anyway.")
+        warnings.warn("SPY has many NaNs — verify source file/columns. Proceeding anyway.", RuntimeWarning)
     if "close_spy" not in df and "close_gspc" not in df:
-        print("Neither SPY nor GSPC loaded — panel will lack an equity price series.")
+        warnings.warn("Neither SPY nor GSPC loaded — panel will lack an equity price series.", RuntimeWarning)
 
     if save:
         save_parquet(df, Path(PROCESSED_DIR) / "market_daily.parquet")
@@ -115,5 +116,4 @@ def build_market_plus_hvol_fwd(ticker: str = "spy", save: bool = True) -> pd.Dat
         save_parquet(out, Path(PROCESSED_DIR) / f"market_extended_{ticker}.parquet")
         save_csv(out, Path(PROCESSED_DIR) / f"market_extended_{ticker}.csv")
     return out
-
 
