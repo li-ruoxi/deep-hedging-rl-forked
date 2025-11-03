@@ -100,3 +100,32 @@ def summary_from_nav(nav, rewards=None):
         max_drawdown=float(dd),
         vol=float(rewards.std(ddof=1) * np.sqrt(252)),
     )
+
+
+import numpy as np, pandas as pd
+from collections import OrderedDict
+class _Hold:
+    def __init__(self, level):
+        self.level = float(level)
+    def act(self, obs, deterministic=True):
+        return float(self.level), None, None
+
+def _nav_from_bps(r):
+    r = np.asarray(r, float)
+    return (1 + r/1e4).cumprod()
+
+def _max_drawdown(nav):
+    peak = np.maximum.accumulate(nav)
+    dd = nav/peak - 1.0
+    return float(dd.min())
+
+def _sortino_bps(r):
+    r = np.asarray(r, float)
+    dn = r[r < 0]
+    if dn.size == 0:
+        return float('inf')
+    dsd = dn.std(ddof=1) if dn.size > 1 else dn.std()
+    if dsd == 0:
+        return float('inf')
+    return float(r.mean() / dsd * np.sqrt(252))
+
