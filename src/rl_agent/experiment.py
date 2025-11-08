@@ -56,7 +56,9 @@ def load_scaler(path: Path, cols: List[str]) -> Callable[[np.ndarray], np.ndarra
 # ----------------- env factory -----------------
 def make_env(panel: pd.DataFrame, mask, features: List[str], window: int,
              txn_cost_bps: float, scaler: Callable[[np.ndarray], np.ndarray],
-             pos_limit: float, reward_scale: float = 1e4):
+             pos_limit: float, reward_scale: float = 1e4,
+             rebalance_every: int = 1, slippage_bps: float = 0.0,
+             slippage_fn: Callable[[float, np.ndarray, dict], float] | None = None):
     return HedgingEnv(
         df=panel.loc[mask].reset_index(drop=True),
         features=features,
@@ -66,6 +68,9 @@ def make_env(panel: pd.DataFrame, mask, features: List[str], window: int,
         scaler=scaler,
         hold_on_nan=True,
         pos_limit=pos_limit,
+        rebalance_every=rebalance_every,
+        slippage_bps=slippage_bps,
+        slippage_fn=slippage_fn,
     )
 
 # ----------------- deterministic rollout -----------------
@@ -111,20 +116,32 @@ class ArtifactLogger:
 def build_envs(panel: pd.DataFrame, features: List[str], train_end: str, valid_end: str,
                window: int, txn_cost_bps: float, pos_limit: float,
                reward_scale: float = 1e4,
-               scaler_out: Path | None = None):
+               scaler_out: Path | None = None,
+               rebalance_every: int = 1,
+               slippage_bps: float = 0.0,
+               slippage_fn: Callable[[float, np.ndarray, dict], float] | None = None):
     _validate_features(panel, features)
+    if "ret_fwd" not in panel.columns:
+        raise ValueError("panel must contain a 'ret_fwd' column before building envs")
     p, m_tr, m_va, m_te, TRAIN_END, VALID_END = make_splits(panel, train_end, valid_end)
     scaler, mu, sg = make_scaler(p, features, m_tr)
     if scaler_out is not None:
         save_scaler(Path(scaler_out), mu, sg)
 
-    env_tr = make_env(p, m_tr, features, window, txn_cost_bps, scaler, pos_limit, reward_scale)
-    env_va = make_env(p, m_va, features, window, txn_cost_bps, scaler, pos_limit, reward_scale)
-    env_te = make_env(p, m_te, features, window, txn_cost_bps, scaler, pos_limit, reward_scale)
+    env_tr = make_env(p, m_tr, features, window, txn_cost_bps, scaler, pos_limit, reward_scale,
+                      rebalance_every=rebalance_every, slippage_bps=slippage_bps,
+                      slippage_fn=slippage_fn)
+    env_va = make_env(p, m_va, features, window, txn_cost_bps, scaler, pos_limit, reward_scale,
+                      rebalance_every=rebalance_every, slippage_bps=slippage_bps,
+                      slippage_fn=slippage_fn)
+    env_te = make_env(p, m_te, features, window, txn_cost_bps, scaler, pos_limit, reward_scale,
+                      rebalance_every=rebalance_every, slippage_bps=slippage_bps,
+                      slippage_fn=slippage_fn)
     input_dim = env_tr.reset().size
     config = dict(
         features=features, window=window, txn_cost_bps=txn_cost_bps, pos_limit=pos_limit,
-        reward_scale=reward_scale, train_end=str(TRAIN_END.date()), valid_end=str(VALID_END.date())
+        reward_scale=reward_scale, train_end=str(TRAIN_END.date()), valid_end=str(VALID_END.date()),
+        rebalance_every=rebalance_every, slippage_bps=slippage_bps,
     )
     return dict(
         env_tr=env_tr, env_va=env_va, env_te=env_te,

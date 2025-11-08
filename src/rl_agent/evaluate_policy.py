@@ -35,6 +35,8 @@ def main():
     mu = panel.loc[m_tr, cfg["features"]].mean()
     sg = panel.loc[m_tr, cfg["features"]].std(ddof=1).replace(0, np.nan).fillna(1.0)
     scaler = lambda obs: (obs - mu.values) / sg.values
+    rebalance_every = int(cfg.get("rebalance_every", 1))
+    slippage_bps = float(cfg.get("slippage_bps", 0.0))
 
     def make_env(mask):
         return HedgingEnv(
@@ -46,6 +48,8 @@ def main():
             scaler=scaler,
             hold_on_nan=True,
             pos_limit=cfg["pos_limit"],
+            rebalance_every=rebalance_every,
+            slippage_bps=slippage_bps,
         )
 
     env_tr, env_va, env_te = make_env(m_tr), make_env(m_va), make_env(m_te)

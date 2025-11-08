@@ -237,6 +237,8 @@ def train(panel: pd.DataFrame,
           window=45,
           txn_cost_bps=1.0,
           pos_limit=2.0, #position limit per option unit
+          rebalance_every: int = 1,
+          slippage_bps: float = 0.0,
           hidden=128, # hidden dim
           lr=1e-3,
           steps=8000,
@@ -258,7 +260,8 @@ def train(panel: pd.DataFrame,
 
     # ----- envs / scaler (no leakage) -----
     envs = build_envs(panel, state_cols, train_end, valid_end,
-                      window=window, txn_cost_bps=txn_cost_bps, pos_limit=pos_limit)
+                      window=window, txn_cost_bps=txn_cost_bps, pos_limit=pos_limit,
+                      rebalance_every=rebalance_every, slippage_bps=slippage_bps)
     env_tr, env_va, env_te = envs["env_tr"], envs["env_va"], envs["env_te"]
     n_features = len(state_cols)
     input_dim  = window * n_features
@@ -364,7 +367,9 @@ def train(panel: pd.DataFrame,
                     if save_config:
                         cfg = dict(
                             features=state_cols, window=window, txn_cost_bps=txn_cost_bps,
-                            pos_limit=pos_limit, hidden=hidden, lr=lr, steps=steps,
+                            pos_limit=pos_limit, rebalance_every=rebalance_every,
+                            slippage_bps=slippage_bps,
+                            hidden=hidden, lr=lr, steps=steps,
                             entropy_start=entropy_start, entropy_floor=entropy_floor,
                             weight_decay=weight_decay, early_stop_patience=early_stop_patience,
                             train_end=train_end, valid_end=valid_end,
@@ -399,7 +404,9 @@ def train(panel: pd.DataFrame,
             config=dict(
                 features=state_cols, window=window, lr=lr, steps=steps,
                 train_end=train_end, valid_end=valid_end,
-                txn_cost_bps=txn_cost_bps, pos_limit=pos_limit, hidden=hidden,
+                txn_cost_bps=txn_cost_bps, pos_limit=pos_limit,
+                rebalance_every=rebalance_every, slippage_bps=slippage_bps,
+                hidden=hidden,
                 entropy_start=entropy_start, entropy_floor=entropy_floor,
                 weight_decay=weight_decay, early_stop_patience=early_stop_patience
             ),
@@ -423,6 +430,10 @@ def parse_args():
     p.add_argument("--window", type=int, default=45)
     p.add_argument("--txn_cost_bps", type=float, default=1.0)
     p.add_argument("--pos_limit", type=float, default=2.0)
+    p.add_argument("--rebalance_every", type=int, default=1,
+                   help="Execute trades every N steps (>=1)")
+    p.add_argument("--slippage_bps", type=float, default=0.0,
+                   help="Extra cost per unit |Δposition| in basis points")
     p.add_argument("--hidden", type=int, default=128)
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--steps", type=int, default=8000)
@@ -461,6 +472,8 @@ def main():
         window=args.window,
         txn_cost_bps=args.txn_cost_bps,
         pos_limit=args.pos_limit,
+        rebalance_every=max(1, args.rebalance_every),
+        slippage_bps=args.slippage_bps,
         hidden=args.hidden,
         lr=args.lr,
         steps=args.steps,

@@ -216,11 +216,26 @@ data/raw/
 data/processed/options_parquet/
 data/processed/cleaned/SPY/
 data/processed/cleaned/SPX/
+data/LFSPointers
+
+# Model artifacts + sweeps (large)
+models/gae_*/
+models/gae_run*/
+models/sweep_run/
+models/smoke_run*/
+models/run*/
+models/gae_cad*/
+models/gae_run2/
+models/gae_run3/
 
 # Large experiment logs & outputs
 experiments/logs/
 wandb/
 mlruns/
+
+# OS / installer junk
+.DS_Store
+pandoc-*.pkg
 
 # Allow small processed demo datasets
 !data/processed/cleaned/

@@ -5,14 +5,30 @@ from pathlib import Path
 from typing import Tuple
 
 import pandas as pd
-import matplotlib.pyplot as plt
-import numpy as np
 import torch
 
 from rl_agent.train_ac_gae import PolicyValueNet, make_obs_fixer
-from rl_agent.experiment import build_envs, deterministic_rewards
+from rl_agent.experiment import build_envs
+from rl_agent.metrics import (
+    nav_curve,
+    calc_drawdown,
+    rollout_stats,
+    summary_from_nav,
+    nav_from_bps,
+    max_drawdown,
+    sortino_bps,
+)
 
-__all__ = ["load_policy"]
+__all__ = [
+    "load_policy",
+    "nav_curve",
+    "calc_drawdown",
+    "rollout_stats",
+    "summary_from_nav",
+    "nav_from_bps",
+    "max_drawdown",
+    "sortino_bps",
+]
 
 
 def load_policy(
@@ -54,6 +70,8 @@ def load_policy(
         txn_cost_bps=cfg["txn_cost_bps"],
         pos_limit=cfg["pos_limit"],
         reward_scale=reward_scale,
+        rebalance_every=int(cfg.get("rebalance_every", 1)),
+        slippage_bps=float(cfg.get("slippage_bps", 0.0)),
     )
 
     env_tr = envs["env_tr"]
@@ -66,66 +84,3 @@ def load_policy(
     policy.pos_limit = float(cfg["pos_limit"])
 
     return policy, cfg, envs
-
-## Additional utility functions for results analysis
-
-def nav_curve(env, policy, label):
-    r = deterministic_rewards(env, policy)
-    nav = (1 + r / 1e4).cumprod()
-    plt.plot(nav, label=label)
-    return r, nav
-
-def calc_drawdown(nav):
-    peak = np.maximum.accumulate(nav)
-    dd = nav / peak - 1.0
-    return float(dd.min())
-
-def rollout_stats(env, policy):
-    ro = env.rollout(lambda obs: policy.act(obs, deterministic=True)[0])
-    nav = (1 + ro["rewards"] / 1e4).cumprod()
-    dd = (nav / np.maximum.accumulate(nav) - 1).min()
-    turnover = np.abs(np.diff(ro["positions"])).sum()
-    return dd, turnover
-
-def summary_from_nav(nav, rewards=None):
-    nav = np.asarray(nav, float)
-    rewards = np.asarray(rewards, float) if rewards is not None else np.diff(nav) / nav[:-1]
-    sharpe = rewards.mean() / rewards.std(ddof=1) * np.sqrt(252) if rewards.std(ddof=1) > 0 else 0.0
-    dd = (nav / np.maximum.accumulate(nav) - 1.0).min()
-    cagr = nav[-1] ** (252 / len(nav)) - 1.0  # assuming daily steps
-    return dict(
-        nav_final=float(nav[-1]),
-        cagr=float(cagr),
-        sharpe=float(sharpe),
-        max_drawdown=float(dd),
-        vol=float(rewards.std(ddof=1) * np.sqrt(252)),
-    )
-
-
-import numpy as np, pandas as pd
-from collections import OrderedDict
-class _Hold:
-    def __init__(self, level):
-        self.level = float(level)
-    def act(self, obs, deterministic=True):
-        return float(self.level), None, None
-
-def _nav_from_bps(r):
-    r = np.asarray(r, float)
-    return (1 + r/1e4).cumprod()
-
-def _max_drawdown(nav):
-    peak = np.maximum.accumulate(nav)
-    dd = nav/peak - 1.0
-    return float(dd.min())
-
-def _sortino_bps(r):
-    r = np.asarray(r, float)
-    dn = r[r < 0]
-    if dn.size == 0:
-        return float('inf')
-    dsd = dn.std(ddof=1) if dn.size > 1 else dn.std()
-    if dsd == 0:
-        return float('inf')
-    return float(r.mean() / dsd * np.sqrt(252))
-

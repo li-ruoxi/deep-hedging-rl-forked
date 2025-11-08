@@ -1,5 +1,6 @@
 # env.py
 from __future__ import annotations
+import warnings
 import numpy as np
 import pandas as pd
 from typing import Callable, Sequence, Optional, Tuple, Dict
@@ -28,6 +29,9 @@ class HedgingEnv:
         scaler: Optional[Callable[[np.ndarray], np.ndarray]] = None,
         rng_seed: int = 0,
         hold_on_nan: bool = True,
+        rebalance_every: int = 1,
+        slippage_bps: float = 0.0,
+        slippage_fn: Optional[Callable[[float, np.ndarray, Dict], float]] = None,
     ):
         """
         Args:
@@ -39,6 +43,9 @@ class HedgingEnv:
             pos_limit: hard clip on position size in [-pos_limit, +pos_limit].
             scaler: optional callable to transform obs window; signature (ndarray)->ndarray.
             rng_seed: RNG seed for any stochastic choices (kept for consistency).
+            rebalance_every: execute trades every N steps (>=1). Non-trade steps hold previous position.
+            slippage_bps: additional basis-point cost per unit of |Δposition| (constant slippage).
+            slippage_fn: optional callable to compute slippage cost; signature (dpos, obs, context)->cost.
         """
         self.df = df.copy()
         self.features = list(features)
@@ -49,6 +56,9 @@ class HedgingEnv:
         self.rng = np.random.default_rng(rng_seed)
         self.reward_fn = reward_fn
         self.hold_on_nan = bool(hold_on_nan)
+        self.rebalance_every = max(1, int(rebalance_every))
+        self.slippage_bps = float(slippage_bps)
+        self.slippage_fn = slippage_fn
 
         # --- basic validations ---
         req_cols = set(self.features + ["ret_fwd"])
@@ -103,11 +113,38 @@ class HedgingEnv:
         r = float(self.R[self.t])
 
         obs_now = self._obs()  # <--- cache
+        step_idx = self.t - self.window
+        execute_trade = (step_idx % self.rebalance_every == 0)
         if self.hold_on_nan and (not np.isfinite(obs_now).all()):
-            a, cost = self.pos, 0.0
+            execute_trade = False
+
+        base_cost = 0.0
+        slip_cost = 0.0
+        dpos = 0.0
+
+        if not execute_trade:
+            a = self.pos
+            cost = 0.0
         else:
             dpos = a - self.pos
-            cost = (self.txn_cost_bps * 1e-4) * abs(dpos)
+            base_cost = (self.txn_cost_bps * 1e-4) * abs(dpos)
+            if self.slippage_fn is not None:
+                try:
+                    slip_cost = float(self.slippage_fn(dpos, obs_now, {
+                        "t": self.t,
+                        "pos": self.pos,
+                        "desired": a,
+                        "step": step_idx,
+                    }))
+                except Exception as exc:
+                    warnings.warn(
+                        f"slippage_fn failed at step {step_idx}: {exc}",
+                        RuntimeWarning,
+                    )
+                    slip_cost = 0.0
+            elif self.slippage_bps:
+                slip_cost = (self.slippage_bps * 1e-4) * abs(dpos)
+            cost = base_cost + slip_cost
 
         pnl = a * r - cost
         self.nav *= (1.0 + pnl)
@@ -115,7 +152,18 @@ class HedgingEnv:
         self.t += 1
         self.done = self.t >= (self.T - 1)
 
-        info = {"ret": r, "pnl": pnl, "pos": self.pos, "nav": self.nav, "cost": cost}
+        info = {
+            "ret": r,
+            "pnl": pnl,
+            "pos": self.pos,
+            "nav": self.nav,
+            "cost": cost,
+            "executed": bool(execute_trade),
+            "dpos": dpos,
+            "txn_cost": base_cost,
+            "slip_cost": slip_cost,
+            "cadence_step": step_idx,
+        }
         reward = float(self.reward_fn(pnl, info))
         next_obs = self._obs() if not self.done else obs_now  # safe if done
         return next_obs, reward, self.done, info
