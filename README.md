@@ -33,6 +33,8 @@ deep-hedging-rl/
 │
 ├── reports/ # paper drafts, figures, slides
 │
+├── models/ # gae_run1
+|
 ├── requirements.txt # pinned dependencies
 ├── environment.yml # optional, for conda setup
 ├── .gitignore # makes sure raw data is excluded
