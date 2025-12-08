@@ -82,6 +82,7 @@ class PolicyNetwork(nn.Module):
             logp = dist.log_prob(z) - torch.log1p(-a.pow(2) + 1e-6)
             logp = logp.sum(dim=-1, keepdim=True)
 
-        a_float = float(a.squeeze().cpu().item())
-        mu_float = float(self.tanh(mu).squeeze().cpu().item())
+        pos_limit = float(getattr(self, "pos_limit", 1.0))
+        a_float = float(a.squeeze().cpu().item() * pos_limit)
+        mu_float = float(self.tanh(mu).squeeze().cpu().item() * pos_limit)
         return a_float, logp.squeeze(0), mu_float

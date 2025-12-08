@@ -1,0 +1,223 @@
+% arXiv-like two-column Pandoc LaTeX template
+% Minimal, focused on matching arXiv look & feel
+% Usage: set `template: reports/templates/arxiv.latex` in pandoc.yaml
+
+\documentclass[$if(classoption)$$classoption$$endif$,$if(fontsize)$$fontsize$$else$11pt$endif$,$if(papersize)$$papersize$$else$letterpaper$endif$,twocolumn]{article}
+
+% Encoding and language
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{textcomp}
+  \usepackage{lmodern}
+  % Map common Unicode chars to LaTeX for pdfTeX
+  \DeclareUnicodeCharacter{2212}{-}% minus sign
+  \DeclareUnicodeCharacter{2013}{--}% en-dash
+  \DeclareUnicodeCharacter{2014}{---}% em-dash
+  \DeclareUnicodeCharacter{2011}{-}% non-breaking hyphen
+  \DeclareUnicodeCharacter{2019}{'}% right single quote
+  \DeclareUnicodeCharacter{201C}{``}% left double quote
+  \DeclareUnicodeCharacter{201D}{''}% right double quote
+  \DeclareUnicodeCharacter{2192}{\ensuremath{\to}}% right arrow
+  \DeclareUnicodeCharacter{2264}{\ensuremath{\le}}% less-equal
+  \DeclareUnicodeCharacter{2265}{\ensuremath{\ge}}% greater-equal
+  \DeclareUnicodeCharacter{0394}{\ensuremath{\Delta}}% Greek capital delta
+  \DeclareUnicodeCharacter{2208}{\ensuremath{\in}}% set membership
+\else
+  % if XeLaTeX or LuaLaTeX
+  \usepackage{unicode-math} % also loads fontspec
+  \defaultfontfeatures{Scale=MatchLowercase}
+  \defaultfontfeatures[\rmfamily]{Ligatures=TeX,Scale=1}
+  \setmainfont{$if(mainfont)$$mainfont$$else$Latin Modern Roman$endif$}
+  \setsansfont{$if(sansfont)$$sansfont$$else$Latin Modern Sans$endif$}
+  \setmonofont{$if(monofont)$$monofont$$else$Latin Modern Mono$endif$}
+  \setmathfont{$if(mathfont)$$mathfont$$else$Latin Modern Math$endif$}
+\fi
+\IfFileExists{microtype.sty}{\usepackage[]{microtype}\UseMicrotypeSet[protrusion]{basicmath}}{}
+
+% Fonts (XeLaTeX-friendly); default to TeX Gyre Termes like arXiv Times
+$if(xetex)$
+  \usepackage{fontspec}
+  \usepackage{unicode-math}
+  \setmainfont{$if(mainfont)$$mainfont$$else$TeX Gyre Termes$endif$}
+  \setsansfont{$if(sansfont)$$sansfont$$else$TeX Gyre Heros$endif$}
+  \setmonofont{$if(monofont)$$monofont$$else$TeX Gyre Cursor$endif$}
+  \setmathfont{$if(mathfont)$$mathfont$$else$TeX Gyre Termes Math$endif$}
+$endif$
+
+% Geometry and spacing
+\usepackage[$if(geometry)$$geometry$$else$margin=1in$endif$]{geometry}
+\setlength{\parindent}{0.5em}
+\setlength{\parskip}{0.2em}
+\setlength{\columnsep}{0.25in}
+
+% Figures, tables, utilities
+\usepackage{graphicx}
+% Look for figures in these paths (root build + reports subfolder)
+\graphicspath{{reports/}{reports/figures/}{figures/}{./}}
+\usepackage{longtable,booktabs,array}
+% Slightly lighter booktabs rules for arXiv-like look
+\setlength{\heavyrulewidth}{0.08em}
+\setlength{\lightrulewidth}{0.05em}
+\setlength{\cmidrulewidth}{0.04em}
+\usepackage{tabularx}
+\usepackage{etoolbox}
+% Counter used by Pandoc for unnumbered tables
+\newcounter{none}
+\usepackage{amsmath,amssymb}
+\usepackage{enumitem}
+\usepackage{csquotes}
+\usepackage{listings}
+\usepackage{listingsutf8}
+\lstset{
+  inputencoding=utf8,
+  basicstyle=\ttfamily\footnotesize,
+  breaklines=true,
+  breakatwhitespace=false,
+  columns=fullflexible,
+  keepspaces=true,
+  tabsize=2,
+  showstringspaces=false,
+  upquote=true,
+  numbers=none,
+  frame=none,
+  aboveskip=0.6em,
+  belowskip=0.6em,
+  captionpos=b,
+  literate={–}{{--}}1 {—}{{---}}1 {−}{{-}}1
+           {∈}{{$$\\in$$}}1 {≤}{{$$\\le$$}}1 {≥}{{$$\\ge$$}}1 {→}{{$$\\to$$}}1 {Δ}{{$$\\Delta$$}}1
+           {’}{'}1 {“}{\textquotedblleft}1 {”}{\textquotedblright}1
+}
+\usepackage{calc}
+\usepackage{placeins}
+\usepackage{caption}
+
+% Hyperref
+\usepackage{xcolor}
+\definecolor{ArXivLink}{HTML}{0B3D91}
+\usepackage{hyperref}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=black,
+  citecolor=ArXivLink,
+  urlcolor=ArXivLink,
+  pdfauthor={$for(author)$$author$$sep$, $endfor$},
+  pdftitle={$title$}
+}
+
+% Provide pandoc's image bounding helper used in recent versions
+\makeatletter
+\newsavebox\pandoc@box
+\newcommand*\pandocbounded[1]{% scales image to fit in text height/width
+  \sbox\pandoc@box{#1}%
+  \Gscale@div\@tempa{\textheight}{\dimexpr\ht\pandoc@box+\dp\pandoc@box\relax}%
+  \Gscale@div\@tempb{\linewidth}{\wd\pandoc@box}%
+  \ifdim\@tempb\p@<\@tempa\p@\let\@tempa\@tempb\fi% select the smaller of both
+  \ifdim\@tempa\p@<\p@\scalebox{\@tempa}{\usebox\pandoc@box}%
+  \else\usebox{\pandoc@box}%
+  \fi%
+}
+% Set default figure placement to htbp
+\def\fps@figure{htbp}
+\makeatother
+
+% Float spacing for compact two-column layout
+\setlength{\textfloatsep}{0.6em}
+\setlength{\floatsep}{0.6em}
+\setlength{\intextsep}{0.6em}
+\setlength{\dbltextfloatsep}{0.6em}
+\setlength{\dblfloatsep}{0.6em}
+
+% Table padding and caption style
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.1}
+\captionsetup{font=small,labelfont=bf}
+\captionsetup[lstlisting]{font=small,labelfont=bf}
+
+% Title formatting similar to arXiv
+\makeatletter
+\renewcommand{\maketitle}{
+  \begin{center}
+    {\LARGE\bfseries $title$\par}\vspace{0.5em}
+    {\large $for(author)$$author$$sep$ \\ $endfor$\par}
+    $if(affiliations)$\vspace{0.25em}{\normalsize $for(affiliations)$$it$$sep$ \\ $endfor$\par}$endif$
+    $if(date)$\vspace{0.25em}{\normalsize $date$\par}$endif$
+  \end{center}
+}
+\makeatother
+
+% Abstract styling to mimic arXiv block
+\newenvironment{arxivabstract}{
+  \small
+  \begin{center}\bfseries Abstract\end{center}
+}{\par\vspace{0.5em}}
+
+% Bibliography heading similar to arXiv
+\usepackage{titlesec}
+\titleformat{\section}{\large\bfseries}{\thesection.}{0.5em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.5em}{}
+
+% Pandoc variables and includes
+% -- citeproc/CSL support (adapted from Pandoc default template) --
+% definitions for citeproc citations
+\NewDocumentCommand\citeproctext{}{}
+\NewDocumentCommand\citeproc{mm}{%
+  \begingroup\def\citeproctext{#2}\cite{#1}\endgroup}
+\makeatletter
+ % allow citations to break across lines
+ \let\@cite@ofmt\@firstofone
+ % avoid brackets around text for \cite:
+ \def\@biblabel#1{}
+ \def\@cite#1#2{{#1\if@tempswa , #2\fi}}
+\makeatother
+\newlength{\cslhangindent}
+\setlength{\cslhangindent}{1.5em}
+\newlength{\csllabelwidth}
+\setlength{\csllabelwidth}{3em}
+\newenvironment{CSLReferences}[2] % #1 hanging-indent, #2 entry-spacing
+ {\begin{list}{}{%
+  \setlength{\itemindent}{0pt}
+  \setlength{\leftmargin}{0pt}
+  \setlength{\parsep}{0pt}
+  % turn on hanging indent if param 1 is 1
+  \ifodd #1
+   \setlength{\leftmargin}{\cslhangindent}
+   \setlength{\itemindent}{-1\cslhangindent}
+  \fi
+  % set entry spacing
+  \setlength{\itemsep}{#2\baselineskip}}}
+ {\end{list}}
+\newcommand{\CSLBlock}[1]{\hfill\break\parbox[t]{\linewidth}{\strut\ignorespaces#1\strut}}
+\newcommand{\CSLLeftMargin}[1]{\parbox[t]{\csllabelwidth}{\strut#1\strut}}
+\newcommand{\CSLRightInline}[1]{\parbox[t]{\linewidth - \csllabelwidth}{\strut#1\strut}}
+\newcommand{\CSLIndent}[1]{\hspace{\cslhangindent}#1}
+\setlength{\emergencystretch}{3em} % prevent overfull lines
+\providecommand{\tightlist}{\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+% passthrough used by Pandoc inline lstinline
+\providecommand{\passthrough}[1]{#1}
+$for(header-includes)$
+$header-includes$
+$endfor$
+
+\begin{document}
+
+% Make title and abstract span both columns using the optional argument to twocolumn
+\twocolumn[
+\maketitle
+$if(abstract)$
+\begin{arxivabstract}
+$abstract$
+\end{arxivabstract}
+$endif$
+$if(disclaimer)$
+{\footnotesize\itshape $disclaimer$\par}\vspace{0.75em}
+$endif$
+$if(code_url)$
+\noindent Code — \url{$code_url$} \par\vspace{0.75em}
+$endif$
+]
+
+$body$
+
+\end{document}

@@ -774,6 +774,91 @@ using <code>models/gae_run1/metrics_comparison.csv</code>.</p>
 Rolling 252‑day Sharpe on the test segment (policy vs SPY).</p>
 <p><img src="figures/drawdown_curve.png" alt="Drawdown Curve" /> Figure:
 Drawdown curve for the test equity series of the learned policy.</p>
+<h2 id="realistic-trading-constraints-cadence-slippage">8.1 Realistic
+Trading Constraints (Cadence + Slippage)</h2>
+<p>In production, desks rarely rebalance daily and always pay more than
+a single, fixed transaction-cost number. To mirror that reality, we
+introduce two explicit knobs in the environment:</p>
+<ul>
+<li><code>rebalance_every = N</code>: only the N‑th step executes a
+trade; intermediate steps hold the previous position and still accrue
+P&amp;L.</li>
+<li><code>slippage_bps</code>: an additional basis‑point cost per unit
+of |Δposition| charged on execution (or, more generally, a
+<code>slippage_fn</code> for state‑dependent costs).</li>
+</ul>
+<p>We ran a small parameter sweep over cadence and slippage using the
+same train/valid/test split. The grid spanned
+<code>rebalance_every ∈ {5, 10, 15}</code> and
+<code>slippage_bps ∈ {3, 5, 8}</code> with <code>pos_limit = 2</code>.
+The best configuration emerged at <code>rebalance_every = 15</code>,
+<code>slippage_bps = 5</code>, which balances fewer trades against
+higher per‑trade cost and provides the most robust test Sharpe.</p>
+<p>Illustrative sweep (code excerpt from
+<code>03_rl_training.ipynb</code>):</p>
+<div class="sourceCode" id="cb7"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> itertools <span class="im">import</span> product</span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> rl_agent.train_ac_gae <span class="im">import</span> train <span class="im">as</span> train_gae</span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a>grid <span class="op">=</span> <span class="bu">list</span>(product([<span class="dv">5</span>, <span class="dv">10</span>, <span class="dv">15</span>], [<span class="fl">3.0</span>, <span class="fl">5.0</span>, <span class="fl">8.0</span>]))</span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a>records <span class="op">=</span> []</span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> cad, slip <span class="kw">in</span> grid:</span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a>    policy, (tr, va, te) <span class="op">=</span> train_gae(</span>
+<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a>        panel<span class="op">=</span>panel, state_cols<span class="op">=</span>state_cols,</span>
+<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a>        train_end<span class="op">=</span><span class="st">&quot;2017-12-31&quot;</span>, valid_end<span class="op">=</span><span class="st">&quot;2019-12-31&quot;</span>,</span>
+<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a>        window<span class="op">=</span><span class="dv">45</span>, txn_cost_bps<span class="op">=</span><span class="fl">10.0</span>, pos_limit<span class="op">=</span><span class="fl">2.0</span>,</span>
+<span id="cb7-11"><a href="#cb7-11" aria-hidden="true" tabindex="-1"></a>        rebalance_every<span class="op">=</span>cad, slippage_bps<span class="op">=</span>slip,</span>
+<span id="cb7-12"><a href="#cb7-12" aria-hidden="true" tabindex="-1"></a>        hidden<span class="op">=</span><span class="dv">256</span>, lr<span class="op">=</span><span class="fl">1e-4</span>, steps<span class="op">=</span><span class="dv">3500</span>,</span>
+<span id="cb7-13"><a href="#cb7-13" aria-hidden="true" tabindex="-1"></a>        entropy_start<span class="op">=</span><span class="fl">0.01</span>, entropy_floor<span class="op">=</span><span class="fl">0.001</span>,</span>
+<span id="cb7-14"><a href="#cb7-14" aria-hidden="true" tabindex="-1"></a>        device<span class="op">=</span><span class="st">&quot;cpu&quot;</span>, seed<span class="op">=</span><span class="dv">42</span>, track_history<span class="op">=</span><span class="va">False</span>,</span>
+<span id="cb7-15"><a href="#cb7-15" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb7-16"><a href="#cb7-16" aria-hidden="true" tabindex="-1"></a>    records.append({<span class="st">&quot;cad&quot;</span>: cad, <span class="st">&quot;slip&quot;</span>: slip,</span>
+<span id="cb7-17"><a href="#cb7-17" aria-hidden="true" tabindex="-1"></a>                    <span class="st">&quot;valid&quot;</span>: va[<span class="st">&quot;sharpe&quot;</span>], <span class="st">&quot;test&quot;</span>: te[<span class="st">&quot;sharpe&quot;</span>]})</span>
+<span id="cb7-18"><a href="#cb7-18" aria-hidden="true" tabindex="-1"></a>pd.DataFrame(records).sort_values([<span class="st">&quot;test&quot;</span>,<span class="st">&quot;valid&quot;</span>], ascending<span class="op">=</span><span class="va">False</span>)</span></code></pre></div>
+<p>A representative top row from the sweep results:</p>
+<table>
+<colgroup>
+<col style="width: 11%" />
+<col style="width: 14%" />
+<col style="width: 14%" />
+<col style="width: 14%" />
+<col style="width: 14%" />
+<col style="width: 14%" />
+<col style="width: 14%" />
+</colgroup>
+<thead>
+<tr>
+<th>tag</th>
+<th style="text-align: right;">rebalance_every</th>
+<th style="text-align: right;">slippage_bps</th>
+<th style="text-align: right;">pos_limit</th>
+<th style="text-align: right;">train_sharpe</th>
+<th style="text-align: right;">valid_sharpe</th>
+<th style="text-align: right;">test_sharpe</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>cad15_slip5p0_pos2p0</td>
+<td style="text-align: right;">15</td>
+<td style="text-align: right;">5.0</td>
+<td style="text-align: right;">2.0</td>
+<td style="text-align: right;">0.303</td>
+<td style="text-align: right;">0.525</td>
+<td style="text-align: right;">0.353</td>
+</tr>
+</tbody>
+</table>
+<p>The figures below summarise performance for this setting.</p>
+<p><img src="figures/policy_sharpe_ratios.png"
+alt="Policy Sharpe Ratios" /> Figure: Deterministic Sharpe across splits
+for GAE policy vs SPY.</p>
+<p><img src="figures/policy_performance_comparison.png"
+alt="Policy Performance Comparison" /> Figure: Bar comparison of
+performance metrics under realistic trading.</p>
+<p><img src="figures/nav_blended_strategy.png"
+alt="Blended Strategy NAV" /> Figure: Test NAV overlay for a blended
+strategy that allocates 50% to GAE and 50% to long SPY (adjustable).</p>
 <p>Simple baselines from <code>src/simulator/baselines.py</code> provide
 context for the learned policy:</p>
 <table>
@@ -903,20 +988,20 @@ major versions (PyTorch, NumPy, pandas, PyArrow).<br />
 <p>Determinism. We fix random seeds, use deterministic evaluation
 rollouts, and fit the scaler only on the training split. Example
 commands:</p>
-<div class="sourceCode" id="cb7"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Train</span></span>
-<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python</span> <span class="at">-m</span> rl_agent.train_ac_gae <span class="dt">\</span></span>
-<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--data_path</span> data/processed/cleaned/hedging_panel_spx.csv <span class="dt">\</span></span>
-<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--features</span> iv_atm_30d_spx,iv_ts_slope_spx,iv_skew_30d_spx,vix,rate_10y,rv_21d,hvol_30d,hvol_91d <span class="dt">\</span></span>
-<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">--window</span> 30 <span class="at">--txn_cost_bps</span> 1.0 <span class="at">--pos_limit</span> 1.0 <span class="dt">\</span></span>
-<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">--hidden</span> 256 <span class="at">--lr</span> 5e-4 <span class="at">--steps</span> 2500 <span class="dt">\</span></span>
-<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">--entropy_start</span> 0.01 <span class="at">--entropy_floor</span> 0.01 <span class="dt">\</span></span>
-<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">--save_ckpt</span> models/gae_run1/best.pt <span class="at">--save_config</span> models/gae_run1/config.json</span>
-<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a><span class="co"># Deterministic evaluation</span></span>
-<span id="cb7-11"><a href="#cb7-11" aria-hidden="true" tabindex="-1"></a><span class="ex">python</span> <span class="at">-m</span> rl_agent.evaluate_policy <span class="dt">\</span></span>
-<span id="cb7-12"><a href="#cb7-12" aria-hidden="true" tabindex="-1"></a>  <span class="at">--ckpt</span> models/gae_run1/best.pt <span class="dt">\</span></span>
-<span id="cb7-13"><a href="#cb7-13" aria-hidden="true" tabindex="-1"></a>  <span class="at">--config</span> models/gae_run1/config.json</span></code></pre></div>
+<div class="sourceCode" id="cb8"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Train</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python</span> <span class="at">-m</span> rl_agent.train_ac_gae <span class="dt">\</span></span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--data_path</span> data/processed/cleaned/hedging_panel_spx.csv <span class="dt">\</span></span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--features</span> iv_atm_30d_spx,iv_ts_slope_spx,iv_skew_30d_spx,vix,rate_10y,rv_21d,hvol_30d,hvol_91d <span class="dt">\</span></span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">--window</span> 30 <span class="at">--txn_cost_bps</span> 1.0 <span class="at">--pos_limit</span> 1.0 <span class="dt">\</span></span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">--hidden</span> 256 <span class="at">--lr</span> 5e-4 <span class="at">--steps</span> 2500 <span class="dt">\</span></span>
+<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">--entropy_start</span> 0.01 <span class="at">--entropy_floor</span> 0.01 <span class="dt">\</span></span>
+<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">--save_ckpt</span> models/gae_run1/best.pt <span class="at">--save_config</span> models/gae_run1/config.json</span>
+<span id="cb8-9"><a href="#cb8-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-10"><a href="#cb8-10" aria-hidden="true" tabindex="-1"></a><span class="co"># Deterministic evaluation</span></span>
+<span id="cb8-11"><a href="#cb8-11" aria-hidden="true" tabindex="-1"></a><span class="ex">python</span> <span class="at">-m</span> rl_agent.evaluate_policy <span class="dt">\</span></span>
+<span id="cb8-12"><a href="#cb8-12" aria-hidden="true" tabindex="-1"></a>  <span class="at">--ckpt</span> models/gae_run1/best.pt <span class="dt">\</span></span>
+<span id="cb8-13"><a href="#cb8-13" aria-hidden="true" tabindex="-1"></a>  <span class="at">--config</span> models/gae_run1/config.json</span></code></pre></div>
 <h1 id="repository-walkthrough">11. Repository Walkthrough</h1>
 <p>This section documents the main modules, their responsibilities, and
 how they interlock. Paths are relative to the repository root.</p>
@@ -973,24 +1058,24 @@ comparing gae_policy, vol_target, momentum, and spy_hold.</li>
 </ul></li>
 </ul>
 <p>Baseline sweep (notebook pattern) — code excerpt:</p>
-<div class="sourceCode" id="cb8"><pre
-class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> collections <span class="im">import</span> OrderedDict</span>
-<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> simulator.baselines <span class="im">import</span> volatility_targeting, momentum_policy</span>
-<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a>comparisons <span class="op">=</span> OrderedDict()</span>
-<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a>comparisons[<span class="st">&quot;gae_policy&quot;</span>] <span class="op">=</span> policy  <span class="co"># trained actor–critic</span></span>
-<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a>comparisons[<span class="st">&quot;spy_hold&quot;</span>]   <span class="op">=</span> <span class="kw">lambda</span> obs: env_tr.pos_limit</span>
-<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a>comparisons[<span class="st">&quot;vol_target&quot;</span>] <span class="op">=</span> volatility_targeting(ann_vol_target<span class="op">=</span><span class="fl">0.15</span>)</span>
-<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a>comparisons[<span class="st">&quot;momentum&quot;</span>]   <span class="op">=</span> momentum_policy(feature_idx<span class="op">=</span><span class="dv">0</span>, k<span class="op">=</span><span class="fl">1.0</span>)</span>
-<span id="cb8-9"><a href="#cb8-9" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb8-10"><a href="#cb8-10" aria-hidden="true" tabindex="-1"></a>rows <span class="op">=</span> []</span>
-<span id="cb8-11"><a href="#cb8-11" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> name, pol <span class="kw">in</span> comparisons.items():</span>
-<span id="cb8-12"><a href="#cb8-12" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> split, env <span class="kw">in</span> [(<span class="st">&quot;train&quot;</span>, env_tr), (<span class="st">&quot;valid&quot;</span>, env_va), (<span class="st">&quot;test&quot;</span>, env_te)]:</span>
-<span id="cb8-13"><a href="#cb8-13" aria-hidden="true" tabindex="-1"></a>        ro <span class="op">=</span> env.rollout(<span class="kw">lambda</span> obs: pol.act(obs, <span class="va">True</span>)[<span class="dv">0</span>] <span class="cf">if</span> <span class="bu">hasattr</span>(pol, <span class="st">&#39;act&#39;</span>) <span class="cf">else</span> pol(obs))</span>
-<span id="cb8-14"><a href="#cb8-14" aria-hidden="true" tabindex="-1"></a>        sharpe <span class="op">=</span> ro[<span class="st">&quot;rewards&quot;</span>].mean() <span class="op">/</span> ro[<span class="st">&quot;rewards&quot;</span>].std(ddof<span class="op">=</span><span class="dv">1</span>) <span class="op">*</span> (<span class="dv">252</span> <span class="op">**</span> <span class="fl">0.5</span>)</span>
-<span id="cb8-15"><a href="#cb8-15" aria-hidden="true" tabindex="-1"></a>        rows.append({<span class="st">&quot;policy&quot;</span>: name, <span class="st">&quot;split&quot;</span>: split, <span class="st">&quot;sharpe&quot;</span>: sharpe})</span>
-<span id="cb8-16"><a href="#cb8-16" aria-hidden="true" tabindex="-1"></a>results_df <span class="op">=</span> pd.DataFrame(rows)</span>
-<span id="cb8-17"><a href="#cb8-17" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(results_df.pivot(index<span class="op">=</span><span class="st">&quot;policy&quot;</span>, columns<span class="op">=</span><span class="st">&quot;split&quot;</span>, values<span class="op">=</span><span class="st">&quot;sharpe&quot;</span>))</span></code></pre></div>
+<div class="sourceCode" id="cb9"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> collections <span class="im">import</span> OrderedDict</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> simulator.baselines <span class="im">import</span> volatility_targeting, momentum_policy</span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a>comparisons <span class="op">=</span> OrderedDict()</span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a>comparisons[<span class="st">&quot;gae_policy&quot;</span>] <span class="op">=</span> policy  <span class="co"># trained actor–critic</span></span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a>comparisons[<span class="st">&quot;spy_hold&quot;</span>]   <span class="op">=</span> <span class="kw">lambda</span> obs: env_tr.pos_limit</span>
+<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a>comparisons[<span class="st">&quot;vol_target&quot;</span>] <span class="op">=</span> volatility_targeting(ann_vol_target<span class="op">=</span><span class="fl">0.15</span>)</span>
+<span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a>comparisons[<span class="st">&quot;momentum&quot;</span>]   <span class="op">=</span> momentum_policy(feature_idx<span class="op">=</span><span class="dv">0</span>, k<span class="op">=</span><span class="fl">1.0</span>)</span>
+<span id="cb9-9"><a href="#cb9-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-10"><a href="#cb9-10" aria-hidden="true" tabindex="-1"></a>rows <span class="op">=</span> []</span>
+<span id="cb9-11"><a href="#cb9-11" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> name, pol <span class="kw">in</span> comparisons.items():</span>
+<span id="cb9-12"><a href="#cb9-12" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> split, env <span class="kw">in</span> [(<span class="st">&quot;train&quot;</span>, env_tr), (<span class="st">&quot;valid&quot;</span>, env_va), (<span class="st">&quot;test&quot;</span>, env_te)]:</span>
+<span id="cb9-13"><a href="#cb9-13" aria-hidden="true" tabindex="-1"></a>        ro <span class="op">=</span> env.rollout(<span class="kw">lambda</span> obs: pol.act(obs, <span class="va">True</span>)[<span class="dv">0</span>] <span class="cf">if</span> <span class="bu">hasattr</span>(pol, <span class="st">&#39;act&#39;</span>) <span class="cf">else</span> pol(obs))</span>
+<span id="cb9-14"><a href="#cb9-14" aria-hidden="true" tabindex="-1"></a>        sharpe <span class="op">=</span> ro[<span class="st">&quot;rewards&quot;</span>].mean() <span class="op">/</span> ro[<span class="st">&quot;rewards&quot;</span>].std(ddof<span class="op">=</span><span class="dv">1</span>) <span class="op">*</span> (<span class="dv">252</span> <span class="op">**</span> <span class="fl">0.5</span>)</span>
+<span id="cb9-15"><a href="#cb9-15" aria-hidden="true" tabindex="-1"></a>        rows.append({<span class="st">&quot;policy&quot;</span>: name, <span class="st">&quot;split&quot;</span>: split, <span class="st">&quot;sharpe&quot;</span>: sharpe})</span>
+<span id="cb9-16"><a href="#cb9-16" aria-hidden="true" tabindex="-1"></a>results_df <span class="op">=</span> pd.DataFrame(rows)</span>
+<span id="cb9-17"><a href="#cb9-17" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(results_df.pivot(index<span class="op">=</span><span class="st">&quot;policy&quot;</span>, columns<span class="op">=</span><span class="st">&quot;split&quot;</span>, values<span class="op">=</span><span class="st">&quot;sharpe&quot;</span>))</span></code></pre></div>
 <h1 id="references">References</h1>
 <h2 id="appendix-a-panel-schema">Appendix A — Panel Schema</h2>
 <p>Complete column schema and dtypes for

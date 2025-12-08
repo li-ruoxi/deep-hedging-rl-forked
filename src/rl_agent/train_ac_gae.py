@@ -199,7 +199,11 @@ def rollout_episode(env, policy: PolicyValueNet, to_fixed, device="cpu",
         logp = logp.sum()
 
         action = scaled_action.detach().cpu().numpy()
-        obs_next, r, done, _ = env.step(action)
+        obs_next, r, done, info = env.step(action)
+        executed = bool(info.get("executed", True))
+        if not executed:
+            # No gradient signal if the trade was skipped (cadence/NaN guard)
+            logp = torch.zeros_like(logp)
         rews.append(float(r)); dones.append(bool(done))
         logps_t.append(logp); states_t.append(x); vals_t.append(v.detach())
 
@@ -239,6 +243,7 @@ def train(panel: pd.DataFrame,
           pos_limit=2.0, #position limit per option unit
           rebalance_every: int = 1,
           slippage_bps: float = 0.0,
+          slippage_fn=None,
           hidden=128, # hidden dim
           lr=1e-3,
           steps=8000,
@@ -261,7 +266,8 @@ def train(panel: pd.DataFrame,
     # ----- envs / scaler (no leakage) -----
     envs = build_envs(panel, state_cols, train_end, valid_end,
                       window=window, txn_cost_bps=txn_cost_bps, pos_limit=pos_limit,
-                      rebalance_every=rebalance_every, slippage_bps=slippage_bps)
+                      rebalance_every=rebalance_every, slippage_bps=slippage_bps,
+                      slippage_fn=slippage_fn)
     env_tr, env_va, env_te = envs["env_tr"], envs["env_va"], envs["env_te"]
     n_features = len(state_cols)
     input_dim  = window * n_features
@@ -347,9 +353,11 @@ def train(panel: pd.DataFrame,
         if step % 50 == 0:
             tr = evaluate_env(env_tr, policy, deterministic=True)
             va = evaluate_env(env_va, policy, deterministic=True)
+            te = evaluate_env(env_te, policy, deterministic=True)
             print(f"[{step:05d}] "
                   f"Train Sharpe {tr['sharpe']:.3f} | "
                   f"Valid Sharpe {va['sharpe']:.3f} | "
+                  f"Test Sharpe  {te['sharpe']:.3f} | "
                   f"LR {opt.param_groups[0]['lr']:.2e} | Ent {ent_coef:.3f}")
 
             if history is not None:

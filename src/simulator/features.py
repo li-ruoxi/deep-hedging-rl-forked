@@ -22,7 +22,12 @@ def _prep_base(df: pd.DataFrame) -> pd.DataFrame:
         raise ValueError("Delta appears out of [-1,1]. Convert percent deltas to fraction before feature selection.")
     return x
 
-def _pick_atm_tolerant(df: pd.DataFrame, target_dte: int, base_delta=0.50):
+def _pick_atm_tolerant(
+    df: pd.DataFrame,
+    target_dte: int,
+    base_delta=0.50,
+    cols=("iv",),
+):
     x = _prep_base(df)
     for dte_tol, d_tol in [(15, 0.15), (25, 0.20), (35, 0.25)]:
         z = x[x["tenor_d"].sub(target_dte).abs() <= dte_tol].copy()
@@ -35,16 +40,24 @@ def _pick_atm_tolerant(df: pd.DataFrame, target_dte: int, base_delta=0.50):
         z["spread"]   = (z["ask"] - z["bid"]) if {"ask","bid"}.issubset(z.columns) else 0.0
         y = (z.sort_values(["date","dte_diff","atm_diff","spread"])
                .drop_duplicates("date"))
-        if len(y): return y[["date","iv"]]
+        if len(y):
+            for col in cols:
+                if col not in y.columns:
+                    y[col] = np.nan
+            return y[["date", *cols]]
     # fallback: nearest-by-delta within widest DTE
     z = x[x["tenor_d"].sub(target_dte).abs() <= 35].copy()
-    if z.empty: return pd.DataFrame(columns=["date","iv"])
+    if z.empty:
+        return pd.DataFrame(columns=["date", *cols])
     z["abs_delta"] = z["delta"].abs()
     z["atm_diff"]  = (z["abs_delta"] - base_delta).abs()
     z["spread"]    = (z["ask"] - z["bid"]) if {"ask","bid"}.issubset(z.columns) else 0.0
     y = (z.sort_values(["date","atm_diff","spread"])
            .drop_duplicates("date"))
-    return y[["date","iv"]]
+    for col in cols:
+        if col not in y.columns:
+            y[col] = np.nan
+    return y[["date", *cols]]
 
 def _pick_25d_wings_by_date(df: pd.DataFrame, target_dte=30):
     x = _prep_base(df); x["abs_delta"] = x["delta"].abs()
@@ -85,15 +98,23 @@ def make_option_features(clean_dir: Path, prefix: str):
     """
     From cleaned parquet parts -> daily features:
       iv_atm_30d_{prefix}, iv_atm_91d_{prefix}, iv_ts_slope_{prefix},
-      iv_put25_30d_{prefix}, iv_call25_30d_{prefix}, iv_skew_30d_{prefix}
+      iv_put25_30d_{prefix}, iv_call25_30d_{prefix}, iv_skew_30d_{prefix},
+      iv_atm_60d_{prefix}, iv_put25_60d_{prefix}, iv_call25_60d_{prefix}, iv_skew_60d_{prefix}
     """
     dset = ds.dataset(clean_dir, format="parquet")
     cols = ["date","tenor_d","put_call","bid","ask","iv","delta"]
     base = dset.to_table(columns=[c for c in cols if c in dset.schema.names]).to_pandas()
 
-    iv30 = _pick_atm_tolerant(base, 30).rename(columns={"iv": f"iv_atm_30d_{prefix}"})
+    atm30 = _pick_atm_tolerant(base, 30, cols=("iv","delta"))
+    if "delta" not in atm30.columns:
+        atm30["delta"] = np.nan
+    iv30 = atm30[["date","iv"]].rename(columns={"iv": f"iv_atm_30d_{prefix}"})
+    delta30 = atm30[["date","delta"]].rename(columns={"delta": f"delta_atm_30d_{prefix}"})
+    iv60 = _pick_atm_tolerant(base, 60, cols=("iv","delta")).rename(columns={"iv": f"iv_atm_60d_{prefix}", "delta": f"delta_atm_60d_{prefix}"})
     iv91 = _pick_atm_tolerant(base, 91).rename(columns={"iv": f"iv_atm_91d_{prefix}"})
     feats = iv30.merge(iv91, on="date", how="outer")
+    feats = feats.merge(delta30, on="date", how="left")
+    feats = feats.merge(iv60[["date", f"iv_atm_60d_{prefix}"]], on="date", how="left")
     feats[f"iv_ts_slope_{prefix}"] = feats[f"iv_atm_91d_{prefix}"] - feats[f"iv_atm_30d_{prefix}"]
 
     wings = _pick_25d_wings_by_date(base, target_dte=30).rename(columns={
@@ -101,7 +122,13 @@ def make_option_features(clean_dir: Path, prefix: str):
         "iv_call25_30d": f"iv_call25_30d_{prefix}",
         "iv_skew_30d": f"iv_skew_30d_{prefix}",
     })
+    wings60 = _pick_25d_wings_by_date(base, target_dte=60).rename(columns={
+        "iv_put25_30d": f"iv_put25_60d_{prefix}",
+        "iv_call25_30d": f"iv_call25_60d_{prefix}",
+        "iv_skew_30d": f"iv_skew_60d_{prefix}",
+    })
 
     out = (feats.merge(wings, on="date", how="left")
+                 .merge(wings60, on="date", how="left")
                  .sort_values("date").reset_index(drop=True))
     return out

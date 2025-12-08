@@ -1,6 +1,7 @@
 # src/rl_agent/trainer.py
 from __future__ import annotations
 from dataclasses import dataclass
+import math
 import numpy as np
 import torch
 import torch.nn as nn
@@ -65,6 +66,8 @@ def train_reinforce(env,
     total_eps = cfg.max_episodes or 10_000_000
     for ep in range(1, total_eps + 1):
         obs = env.reset()
+        pos_limit = float(getattr(env, "pos_limit", 1.0))
+        policy.pos_limit = pos_limit
         logps: List[torch.Tensor] = []
         entrs: List[torch.Tensor] = []
         rewards: List[float] = []
@@ -80,11 +83,11 @@ def train_reinforce(env,
             a = torch.tanh(z)
 
             # env step
-            act = float(a.squeeze().detach().cpu().item())
+            act = float(a.squeeze().detach().cpu().item() * pos_limit)
             obs, r, done, info = env.step(act)
 
             # log prob with tanh correction + entropy
-            logp = dist.log_prob(z) - torch.log1p(-a.pow(2) + 1e-6)
+            logp = dist.log_prob(z) - torch.log1p(-a.pow(2) + 1e-6) - math.log(pos_limit)
             logp = logp.sum(dim=-1)  # (1,)
             ent = dist.entropy().sum(dim=-1)
 

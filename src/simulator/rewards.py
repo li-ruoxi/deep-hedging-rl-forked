@@ -31,10 +31,19 @@ def first_full_date(df, cols):
     m = df[cols].notna().all(axis=1)
     return df.loc[m, "date"].min()
 
-def period_sharpe(panel, rewards, start, end):
-    # align rewards to panel rows the env stepped through
+def period_sharpe(panel, rewards, start, end, window: int = 0):
+    """
+    Compute Sharpe over a date range, aligning rewards to the rows the env stepped through.
+
+    Args:
+        panel:   DataFrame with a 'date' column matching the env data.
+        rewards: Reward array from an env rollout.
+        start:   Period start date (inclusive).
+        end:     Period end date (inclusive).
+        window:  Observation window used by the env; rewards begin after this many rows.
+    """
     n = len(rewards)
-    dates = panel["date"].iloc[:n]
+    dates = panel["date"].iloc[window : window + n]
     mask = (dates >= start) & (dates <= end)
     r = rewards[mask.to_numpy()]
     if r.size < 5 or np.isclose(r.std(ddof=1), 0.0):

@@ -15,6 +15,8 @@ __all__ = [
     "max_drawdown",
     "sortino_bps",
     "combo_summary",
+    "newey_west_sharpe_stats",
+    "block_bootstrap_ci",
 ]
 
 
@@ -105,3 +107,61 @@ def combo_summary(env, policy_main, policy_baseline, blend_weight: float, split:
         "nav": nav,
         "rewards": combo_r,
     }
+
+
+def newey_west_sharpe_stats(rewards, lag: int = 5):
+    """Sharpe, NW standard error, and t-stat for a reward series."""
+    r = np.asarray(rewards, dtype=float)
+    r = r[np.isfinite(r)]
+    n = r.size
+    if n < 5:
+        return float("nan"), float("nan"), float("nan")
+
+    mean = r.mean()
+    std = r.std(ddof=1)
+    if std == 0:
+        return float("nan"), float("nan"), float("nan")
+
+    sharpe = float(mean / std * np.sqrt(252))
+    demeaned = r - mean
+    lag = min(lag, n - 1)
+    gamma0 = float(np.dot(demeaned, demeaned) / n)
+    var = gamma0
+    for ell in range(1, lag + 1):
+        gamma = float(np.dot(demeaned[ell:], demeaned[:-ell]) / n)
+        weight = 1 - ell / (lag + 1)
+        var += 2 * weight * gamma
+    se_mean = np.sqrt(var / n)
+    se_sharpe = float(se_mean / std * np.sqrt(252)) if std > 0 else float("nan")
+    t_stat = float(sharpe / se_sharpe) if se_sharpe and se_sharpe > 0 else float("nan")
+    return sharpe, se_sharpe, t_stat
+
+
+def block_bootstrap_ci(rewards, block: int = 21, draws: int = 2000, seed: int = 7):
+    """Block-bootstrap confidence interval for the Sharpe estimate."""
+    r = np.asarray(rewards, dtype=float)
+    r = r[np.isfinite(r)]
+    n = r.size
+    if n < 5:
+        return float("nan"), float("nan")
+
+    rng = np.random.default_rng(seed)
+    estimates = []
+    for _ in range(draws):
+        sample = []
+        while len(sample) < n:
+            start = rng.integers(0, n)
+            block_slice = r[start : start + block]
+            if len(block_slice) < block:
+                block_slice = np.concatenate([block_slice, r[: block - len(block_slice)]])
+            sample.append(block_slice)
+        sample = np.concatenate(sample)[:n]
+        std = sample.std(ddof=1)
+        if std == 0:
+            continue
+        estimates.append(sample.mean() / std * np.sqrt(252))
+
+    if not estimates:
+        return float("nan"), float("nan")
+
+    return tuple(np.percentile(estimates, [2.5, 97.5]))
