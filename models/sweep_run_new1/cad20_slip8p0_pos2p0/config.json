@@ -1,0 +1,28 @@
+{
+  "features": [
+    "iv_atm_30d_spx",
+    "iv_ts_slope_spx",
+    "iv_skew_30d_spx",
+    "vix",
+    "rate_10y",
+    "rv_21d",
+    "hvol_30d",
+    "hvol_91d",
+    "delta_atm_30d_spx",
+    "rv_60d"
+  ],
+  "window": 30,
+  "lr": 0.0005,
+  "steps": 2500,
+  "train_end": "2017-12-31",
+  "valid_end": "2019-12-31",
+  "txn_cost_bps": 10.0,
+  "pos_limit": 2.0,
+  "rebalance_every": 20,
+  "slippage_bps": 8.0,
+  "hidden": 256,
+  "entropy_start": 0.01,
+  "entropy_floor": 0.01,
+  "weight_decay": 0.0001,
+  "early_stop_patience": 600
+}
