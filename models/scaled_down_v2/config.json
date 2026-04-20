@@ -1,0 +1,28 @@
+{
+  "features": [
+    "close_spy",
+    "vix",
+    "rate_10y",
+    "volume_spy",
+    "rv_5d",
+    "rv_10d",
+    "rv_20d",
+    "rv_60d",
+    "spy_ret_lag1",
+    "spy_ret_lag5"
+  ],
+  "window": 30,
+  "lr": 0.001,
+  "steps": 2000,
+  "train_end": "2017-12-31",
+  "valid_end": "2019-12-31",
+  "txn_cost_bps": 1.0,
+  "pos_limit": 2.0,
+  "rebalance_every": 1,
+  "slippage_bps": 8.0,
+  "hidden": 64,
+  "entropy_start": 0.5,
+  "entropy_floor": 0.0,
+  "weight_decay": 0.0,
+  "early_stop_patience": null
+}
